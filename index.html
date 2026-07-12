@@ -347,7 +347,7 @@ const CONSULT_REF = "For Mechanical, Electrical, Structural & Civil review refer
 function freshReport(num, prevItems){
   return { number:num, dates:[], times:"10:00 a.m.",
     progress:[{id:uid(),text:CONSULT_REF,photoIds:[],boiler:true}],
-    obs:[], prev:prevItems, generalPhotoIds:[] };
+    obs:[], prev:prevItems, generalPhotoIds:[], walkNotes:[], superQs:[] };
 }
 function seedPrev(){
   const prev = SEED_ITEMS.filter(i=>i.sec==='prev').map(i=>({num:i.num,text:i.text,resolved:false}));
@@ -495,7 +495,22 @@ let recog=null, recOn=false, pendingPhotoIds=[];
 function renderWalk(m){
   const {prog, obs} = numbered();
   const nextNum = WALKSEC==='progress' ? `${S.report.number}.${S.report.progress.length+1}` : `${S.report.number}.${S.report.progress.length+S.report.obs.length+1}`;
+  const wn = S.report.walkNotes = S.report.walkNotes||[];
+  const wWords = wn.join(' ').split(/\s+/).filter(Boolean).length;
   m.innerHTML = `
+  <div class="card" style="border-color:var(--teal-dk);background:linear-gradient(180deg,var(--card),rgba(19,78,58,.25))">
+    <h2>Walk mode — record the whole walkthrough</h2>
+    <p class="note">Hands-free option: tap, talk as you walk, tap to pause — as many times as you like. When you're done, AI turns the whole recording into grouped report items (same trade/scope combined across floors) for your review.</p>
+    <div style="display:flex;justify-content:center;margin:10px 0 4px">
+      <button class="mic" id="walkBtn" style="width:88px;height:88px;font-size:36px">🚶</button>
+    </div>
+    <p class="hint" id="walkHint">Tap to start recording the walk</p>
+    <p class="hint" id="walkInfo">${wWords?wWords+' words captured so far':''}</p>
+    <div class="row" style="margin-top:8px">
+      <button class="btn" id="buildBtn" ${wWords?'':'disabled'}>✨ Build report items from walk</button>
+      ${wWords?'<button class="btn sec small" id="clearWalkBtn" style="flex:0 0 auto">🗑</button>':''}
+    </div>
+  </div>
   <div class="seg">
     <button id="segP" class="${WALKSEC==='progress'?'on':''}">Progress of the Work</button>
     <button id="segO" class="${WALKSEC==='obs'?'on':''}">Observations &amp; Comments</button>
@@ -536,6 +551,10 @@ function renderWalk(m){
     if(!t){ toast('Nothing to tidy yet'); return; } aiCompose(t); };
   $('#rawBtn').onclick=()=>{ if(lastRaw!=null){ $('#noteBox').value=lastRaw; $('#rawBtn').style.display='none'; } };
   $('#cmdBtn').onclick=aiCommand;
+  $('#walkBtn').onclick=walkToggle;
+  $('#buildBtn').onclick=aiBuildFromWalk;
+  const cw=$('#clearWalkBtn'); if(cw)cw.onclick=()=>{ if(confirm('Discard the recorded walk notes?')){ S.report.walkNotes=[]; save(); render(); } };
+  if(walkOn){ const b=$('#walkBtn'); if(b)b.classList.add('rec'); const h=$('#walkHint'); if(h)h.textContent='● Recording the walk… tap to pause'; }
   $('#addPhotoBtn').onclick=()=>{ $('#fileItem').onchange=async e=>{
       const ids = await importFiles([...e.target.files],'pending');
       pendingPhotoIds.push(...ids); e.target.value=''; drawPending();
@@ -740,6 +759,89 @@ function toggleRec(mode){
   };
   recog.onerror=ev=>{ toast('Mic: '+ev.error+' — you can use the iOS keyboard mic 🎤 instead'); };
   try{ recog.start(); }catch(e){}
+}
+
+/* ---- Walk mode: record entire walkthrough, AI builds grouped items ---- */
+let walkOn=false, walkRecog=null, walkSeg='';
+function walkToggle(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ toast('Voice recognition unavailable on this browser'); return; }
+  if(walkOn){ walkOn=false; try{ walkRecog.stop(); }catch(e){} return; }
+  if(!S.settings.aiKey){ toast('Walk mode needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  walkOn=true; startWalkRec(SR);
+  const b=$('#walkBtn'); if(b)b.classList.add('rec');
+  const h=$('#walkHint'); if(h)h.textContent='● Recording the walk… tap to pause';
+  keepAwake();
+}
+function startWalkRec(SR){
+  walkRecog=new SR();
+  walkRecog.lang='en-CA'; walkRecog.continuous=true; walkRecog.interimResults=true;
+  walkSeg='';
+  walkRecog.onresult=e=>{
+    let fin='', inter='';
+    for(let i=0;i<e.results.length;i++){ const r=e.results[i];
+      if(r.isFinal) fin+=r[0].transcript; else inter+=r[0].transcript; }
+    walkSeg=fin;
+    const h=$('#walkHint'); if(h)h.textContent='● …'+(fin+inter).slice(-70);
+  };
+  walkRecog.onend=()=>{
+    if(walkSeg.trim()){ (S.report.walkNotes=S.report.walkNotes||[]).push(walkSeg.trim()); walkSeg=''; save(); }
+    if(walkOn){ try{ startWalkRec(SR); return; }catch(e){ walkOn=false; } }
+    document.querySelectorAll('.mic').forEach(b=>b.classList.remove('rec'));
+    if(TAB==='walk') render();
+  };
+  walkRecog.onerror=ev=>{ if(ev.error!=='no-speech') toast('Mic: '+ev.error); };
+  try{ walkRecog.start(); }catch(e){}
+}
+async function aiBuildFromWalk(){
+  const notes=(S.report.walkNotes||[]).join('\n---\n').trim();
+  if(!notes){ toast('Record a walk first'); return; }
+  if(!S.settings.aiKey){ toast('Add your API key in Setup'); TAB='settings'; render(); return; }
+  if(walkOn){ walkOn=false; try{ walkRecog.stop(); }catch(e){} }
+  const h=$('#walkHint'); if(h)h.textContent='✨ Building report items from your walk…';
+  const btn=$('#buildBtn'); if(btn)btn.disabled=true;
+  const SYS=`You turn an Ontario architect's recorded site-walkthrough narration into items for General Review Report (OAA general review, Pro-Demnity-conscious wording).
+
+Respond with ONLY a JSON object: {"progress":["item text", ...], "observations":["item text", ...]}
+
+How to build the items:
+- GROUP related mentions across the whole walk into single items by trade/scope: if the speaker mentions interior steel stud framing on several floors at different moments, combine into ONE item, e.g. "Interior steel stud framing near completion at Levels 2 and 3; not started at Levels 6 and 7."
+- Order items logically by trade/assembly, generally following construction sequence.
+- "progress" = status of work (underway, continuing, complete, not started, deliveries, mock-ups).
+- "observations" = deficiencies, nonconformances, concerns, items requiring correction, review or coordination — state the required follow-up and responsible party ("Contractor to correct and advise.", "Structural Consultant to review.").
+- Concise, factual, past-tense observational voice ("observed", "noted"). 1–3 sentences per item.
+- Stay in the architect's lane: no means and methods, no safety directives, refer other consultants' scopes to them.
+- Resolve self-corrections (keep only final intent). Ignore filler, asides, and conversation not meant for the report.
+- Do not invent anything not in the notes.
+
+Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`;
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+      headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+        'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-5',max_tokens:3000,system:SYS,
+        messages:[{role:'user',content:'Walkthrough narration (segments separated by ---):\n'+notes}]})});
+    const data=await resp.json();
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
+    const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+    const m=txt.match(/\{[\s\S]*\}/); if(!m) throw new Error('no items returned');
+    const out=JSON.parse(m[0]);
+    const np=(out.progress||[]).filter(t=>t&&t.trim());
+    const no=(out.observations||[]).filter(t=>t&&t.trim());
+    if(!np.length && !no.length) throw new Error('nothing extracted');
+    // insert progress items before the consultant-reference boiler item if it is last
+    const boilerIdx=S.report.progress.findIndex(x=>x.boiler);
+    const insertAt=(boilerIdx>=0 && boilerIdx===S.report.progress.length-1)?boilerIdx:S.report.progress.length;
+    S.report.progress.splice(insertAt,0,...np.map(t=>({id:uid(),text:t.trim(),photoIds:[]})));
+    no.forEach(t=>S.report.obs.push({id:uid(),text:t.trim(),photoIds:[]}));
+    S.report.walkNotes=[];
+    save(); render();
+    toast('✨ '+np.length+' progress + '+no.length+' observation item(s) built — review, drag, edit');
+  }catch(e){
+    if(btn)btn.disabled=false;
+    const h2=$('#walkHint'); if(h2)h2.textContent='Tap to start recording the walk';
+    toast('Build failed: '+e.message+' — walk notes kept');
+  }
 }
 
 /* ---- AI compose: spoken intent -> report-ready item ---- */
