@@ -639,6 +639,7 @@ async function drawWalkList(){
       <div class="ops">
         <button class="btn small sec ed">✎ Edit</button>
         <button class="btn small sec gr">Aa✓ Grammar</button>
+        ${it.prevText&&it.prevText!==it.text?'<button class="btn small sec un">↩︎</button>':''}
         <button class="btn small sec ph">📷 Photo</button>
         <button class="btn small warn dl">🗑</button>
       </div>
@@ -648,8 +649,11 @@ async function drawWalkList(){
     const id=node.dataset.id, sec=node.dataset.sec;
     const arr = sec==='progress'?S.report.progress:S.report.obs;
     const it = arr.find(x=>x.id===id);
-    node.querySelector('.ed').onclick=()=>startInlineEdit(node, ()=>it.text, v=>{ it.text=v; save(); render(); });
-    node.querySelector('.gr').onclick=()=>aiGrammar(node, ()=>it.text, v=>{ it.text=v; save(); render(); });
+    const setT=v=>{ it.prevText=it.text; it.text=v; save(); render(); };
+    node.querySelector('.ed').onclick=()=>startInlineEdit(node, ()=>it.text, setT);
+    node.querySelector('.gr').onclick=()=>aiGrammar(node, ()=>it.text, setT);
+    const un=node.querySelector('.un');
+    if(un) un.onclick=()=>{ const t=it.text; it.text=it.prevText; it.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); };
     node.querySelector('.ph').onclick=()=>{ $('#fileItem').onchange=async e=>{
         const ids=await importFiles([...e.target.files], id);
         it.photoIds=(it.photoIds||[]).concat(ids); e.target.value=''; save(); render();
@@ -1217,14 +1221,17 @@ function renderPrev(m){
         <button class="btn small ${p.resolved?'sec':''}" data-i="${i}" data-op="res">${p.resolved?'↩︎ Reopen':'✓ Resolved'}</button>
         <button class="btn small sec" data-i="${i}" data-op="ed">✎ Update</button>
         <button class="btn small sec" data-i="${i}" data-op="gr">Aa✓</button>
+        ${p.prevText&&p.prevText!==p.text?`<button class="btn small sec" data-i="${i}" data-op="un">↩︎</button>`:''}
       </div>
     </div>`);
   });
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{
     const p=S.report.prev[+b.dataset.i];
+    const setP=v=>{ p.prevText=p.text; p.text=v; save(); render(); };
     if(b.dataset.op==='res'){ p.resolved=!p.resolved; save(); render(); }
-    else if(b.dataset.op==='gr') aiGrammar(b.closest('.item'), ()=>p.text, v=>{ p.text=v; save(); render(); });
-    else startInlineEdit(b.closest('.item'), ()=>p.text, v=>{ p.text=v; save(); render(); });
+    else if(b.dataset.op==='gr') aiGrammar(b.closest('.item'), ()=>p.text, setP);
+    else if(b.dataset.op==='un'){ const t=p.text; p.text=p.prevText; p.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); }
+    else startInlineEdit(b.closest('.item'), ()=>p.text, setP);
   });
   $('#addPrevBtn').onclick=()=>{
     const num=prompt('Item number (e.g. 16.11)'); if(!num)return;
@@ -1300,6 +1307,7 @@ function renderReport(m){
     <div class="preview" id="prevDoc"></div>
     <button class="btn sec" id="recheckBtn" style="margin-top:10px">✔️ Re-check wording against specs &amp; drawings</button>
     <button class="btn sec" id="grammarAllBtn" style="margin-top:8px">Aa✓ Grammar check — all items</button>
+    ${(()=>{try{const u=JSON.parse(localStorage.getItem('grr-undo')||'null');return u?'<button class="btn sec" id="undoAiBtn" style="margin-top:8px;border-color:var(--amber);color:var(--amber)">↩︎ Undo last AI pass ('+esc(u.label)+')</button>':''}catch(e){return ''}})()}
     <p class="hint" id="recheckHint"></p>
     <div class="gate">
       <b>Is this ready to go to print?</b>
@@ -1324,6 +1332,7 @@ function renderReport(m){
   m.querySelectorAll('.dx').forEach(b=>b.onclick=()=>{ S.report.dates.splice(+b.dataset.i,1); save(); render(); });
   $('#recheckBtn').onclick=aiRecheck;
   $('#grammarAllBtn').onclick=aiGrammarAll;
+  const ub=$('#undoAiBtn'); if(ub)ub.onclick=undoLastAI;
   $('#notReady').onclick=()=>{ gateOK=false; $('#genOut').innerHTML=''; toast('OK — adjust, then come back'); };
   $('#readyBtn').onclick=async()=>{ gateOK=true; await generateAll(); };
   $('#closeOut').onclick=closeOut;
@@ -1393,13 +1402,14 @@ Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], 
     if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
     if(!m) throw new Error('no result (stop: '+(data.stop_reason||'?')+')');
     const out=JSON.parse(m[0]);
+    if((out.items||[]).length) snapshotUndo('spec re-check');
     let changed=0;
     (out.items||[]).forEach(rev=>{
       if(!rev.num||!rev.text) return;
       const hit=[...prog,...obs].find(x=>x.num===rev.num); if(!hit) return;
       const arr=prog.includes(hit)?S.report.progress:S.report.obs;
       const it=arr.find(i=>i.id===hit.id);
-      if(it && it.text!==rev.text.trim()){ it.text=rev.text.trim(); changed++; }
+      if(it && it.text!==rev.text.trim()){ it.prevText=it.text; it.text=rev.text.trim(); changed++; }
     });
     save(); render();
     const h2=$('#recheckHint');
@@ -1409,6 +1419,21 @@ Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], 
     const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Check failed: '+e.message; h2.style.color='var(--red)'; }
   }
   if(btn)btn.disabled=false;
+}
+
+/* ---- one-level undo for batch AI passes ---- */
+function snapshotUndo(label){
+  try{ localStorage.setItem('grr-undo', JSON.stringify({label, at:Date.now(),
+    progress:S.report.progress, obs:S.report.obs, prev:S.report.prev})); }catch(e){}
+}
+function undoLastAI(){
+  try{
+    const u=JSON.parse(localStorage.getItem('grr-undo')||'null');
+    if(!u){ toast('Nothing to undo'); return; }
+    S.report.progress=u.progress; S.report.obs=u.obs; S.report.prev=u.prev;
+    localStorage.removeItem('grr-undo');
+    save(); render(); toast('↩︎ Restored items as they were before "'+u.label+'"');
+  }catch(e){ toast('Undo failed: '+e.message); }
 }
 
 /* ---- master grammar pass over the whole report ---- */
@@ -1439,13 +1464,14 @@ async function aiGrammarAll(){
     if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
     if(!m) throw new Error('no result');
     const out=JSON.parse(m[0]);
+    if((out.items||[]).length) snapshotUndo('grammar check');
     let changed=0; const touched=[];
     (out.items||[]).forEach(rev=>{
       if(!rev.num||!rev.text) return;
       const f=findByNum(rev.num);
-      if(f){ const it=f.arr[f.idx]; if(it.text!==rev.text.trim()){ it.text=rev.text.trim(); changed++; touched.push(rev.num); } return; }
+      if(f){ const it=f.arr[f.idx]; if(it.text!==rev.text.trim()){ it.prevText=it.text; it.text=rev.text.trim(); changed++; touched.push(rev.num); } return; }
       const p=S.report.prev.find(x=>x.num===rev.num);
-      if(p && p.text!==rev.text.trim()){ p.text=rev.text.trim(); changed++; touched.push(rev.num); }
+      if(p && p.text!==rev.text.trim()){ p.prevText=p.text; p.text=rev.text.trim(); changed++; touched.push(rev.num); }
     });
     save(); render();
     const h2=$('#recheckHint');
