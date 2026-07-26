@@ -465,7 +465,8 @@ function numbered(){
   const N = S.report.number;
   const prog = S.report.progress.map((it,i)=>({...it, num:`${N}.${i+1}`}));
   const obs  = S.report.obs.map((it,i)=>({...it, num:`${N}.${S.report.progress.length+i+1}`}));
-  const prev = S.report.prev.filter(p=>!p.resolved);
+  // OAA PT.05: resolved items are recorded as such on the next report, then deleted from subsequent reports
+  const prev = S.report.prev.map(p=>p.resolved? {...p, text:p.text.replace(/\s*$/,'')+' — Attended to; item resolved and closed.'} : p);
   return {prog, obs, prev};
 }
 function fmtDates(){
