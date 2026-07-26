@@ -647,9 +647,7 @@ async function drawWalkList(){
     const id=node.dataset.id, sec=node.dataset.sec;
     const arr = sec==='progress'?S.report.progress:S.report.obs;
     const it = arr.find(x=>x.id===id);
-    node.querySelector('.ed').onclick=()=>{
-      const nv=prompt('Edit item', it.text); if(nv!=null){ it.text=nv.trim(); save(); render(); }
-    };
+    node.querySelector('.ed').onclick=()=>startInlineEdit(node, ()=>it.text, v=>{ it.text=v; save(); render(); });
     node.querySelector('.ph').onclick=()=>{ $('#fileItem').onchange=async e=>{
         const ids=await importFiles([...e.target.files], id);
         it.photoIds=(it.photoIds||[]).concat(ids); e.target.value=''; save(); render();
@@ -905,6 +903,56 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
   }
 }
 
+/* ---- inline item editor with spoken AI rewrite ---- */
+function startInlineEdit(node, getText, setText){
+  if(node.querySelector('.inline-ed')) return;
+  const p=node.querySelector('p');
+  const wrap=document.createElement('div'); wrap.className='inline-ed';
+  wrap.innerHTML=`<textarea style="min-height:96px;margin-top:6px"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="btn small" data-a="save">💾 Save</button>
+      <button class="btn small sec" data-a="ai">🎙✨ Speak to rewrite</button>
+      <button class="btn small sec" data-a="cancel" style="flex:0 0 auto">✕</button>
+    </div>
+    <p class="hint ie-hint" style="text-align:left;margin-top:6px"></p>`;
+  p.style.display='none';
+  p.after(wrap);
+  const ta=wrap.querySelector('textarea'); ta.value=getText();
+  const ops=node.querySelector('.ops'); if(ops) ops.style.display='none';
+  wrap.querySelector('[data-a=save]').onclick=()=>{ const v=ta.value.trim(); if(v) setText(v); };
+  wrap.querySelector('[data-a=cancel]').onclick=()=>{ wrap.remove(); p.style.display=''; if(ops) ops.style.display=''; };
+  wrap.querySelector('[data-a=ai]').onclick=()=>aiRewriteInline(ta, wrap.querySelector('.ie-hint'));
+  ta.focus();
+}
+async function aiRewriteInline(ta, hint){
+  if(!S.settings.aiKey){ toast('AI rewrite needs your API key — add it in Setup'); return; }
+  const go=async(instr)=>{
+    if(!instr||!instr.trim()) return;
+    hint.textContent='✨ Rewriting…';
+    try{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,
+          system:'You rewrite a single General Review Report item for an Ontario architect. Apply the spoken instruction to the current item. Keep the concise, past-tense observational OAA report voice; stay within the architect\'s lane (no means and methods; refer other consultants\' scopes to them). Output ONLY the revised item text — no preamble, no quotes.'+specSuffix(),
+          messages:[{role:'user',content:'Current item:\n'+ta.value+'\n\nSpoken instruction:\n'+instr}]})});
+      const data=await resp.json();
+      if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
+      const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+      if(!text) throw new Error('empty response');
+      ta.value=text;
+      hint.textContent='✨ Rewritten — review, adjust if needed, then Save';
+    }catch(e){ hint.textContent='⚠️ '+e.message; }
+  };
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ const t=prompt('How should it be rewritten?'); go(t); return; }
+  const r=new SR(); r.lang='en-CA'; r.continuous=false; r.interimResults=false;
+  hint.textContent='🎙 Listening — say the change, e.g. "east elevation is complete, drop the percentage"';
+  r.onresult=e=>go(e.results[0][0].transcript);
+  r.onerror=ev=>{ hint.textContent='Mic: '+ev.error+' — or type your change right in the box above'; };
+  try{ r.start(); }catch(e){}
+}
+
 /* ---- AI compose: spoken intent -> report-ready item ---- */
 function specSuffix(){
   const s=(S.settings.specText||'').trim();
@@ -1054,10 +1102,9 @@ function renderSuper(m){
   });
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{
     const q=qs[+b.dataset.i];
-    if(b.dataset.op==='d'){ q.done=!q.done; }
-    else if(b.dataset.op==='e'){ const nv=prompt('Edit question', q.text); if(nv!=null) q.text=nv.trim(); }
-    else { qs.splice(+b.dataset.i,1); }
-    save(); render();
+    if(b.dataset.op==='d'){ q.done=!q.done; save(); render(); }
+    else if(b.dataset.op==='e'){ startInlineEdit(b.closest('.item'), ()=>q.text, v=>{ q.text=v; save(); render(); }); }
+    else { qs.splice(+b.dataset.i,1); save(); render(); }
   });
   $('#sAdd').onclick=()=>{ const t=$('#sBox').value.trim(); if(!t){toast('Type or speak a question first');return;}
     qs.push({id:uid(),text:t,done:false}); $('#sBox').value=''; save(); render(); };
@@ -1143,7 +1190,7 @@ function renderPrev(m){
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{
     const p=S.report.prev[+b.dataset.i];
     if(b.dataset.op==='res'){ p.resolved=!p.resolved; save(); render(); }
-    else { const nv=prompt('Update item '+p.num, p.text); if(nv!=null){ p.text=nv.trim(); save(); render(); } }
+    else startInlineEdit(b.closest('.item'), ()=>p.text, v=>{ p.text=v; save(); render(); });
   });
   $('#addPrevBtn').onclick=()=>{
     const num=prompt('Item number (e.g. 16.11)'); if(!num)return;
