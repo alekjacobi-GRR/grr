@@ -831,13 +831,20 @@ How to build the items:
 
 Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`;
   try{
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
-      headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
-        'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-5',max_tokens:3000,system:SYS,
-        messages:[{role:'user',content:'Walkthrough narration (segments separated by ---):\n'+notes}]})});
-    const data=await resp.json();
-    if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
+    const callModel=async(model)=>{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:model,max_tokens:3000,system:SYS,
+          messages:[{role:'user',content:'Walkthrough narration (segments separated by ---):\n'+notes}]})});
+      const data=await resp.json().catch(()=>({}));
+      return {resp,data};
+    };
+    let {resp,data}=await callModel('claude-sonnet-5');
+    if(!resp.ok && data.error && /model|not_found/i.test((data.error.type||'')+(data.error.message||''))){
+      ({resp,data}=await callModel('claude-haiku-4-5-20251001'));
+    }
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
     const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
     const m=txt.match(/\{[\s\S]*\}/); if(!m) throw new Error('no items returned');
     const out=JSON.parse(m[0]);
@@ -856,8 +863,9 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
     toast('✨ Built: '+np.length+' progress · '+no.length+' observation(s)'+(nq.length?' · '+nq.length+' super question(s) → Super tab':'')+' — review & edit');
   }catch(e){
     if(btn)btn.disabled=false;
-    const h2=$('#walkHint'); if(h2)h2.textContent='Tap to start recording the walk';
-    toast('Build failed: '+e.message+' — walk notes kept');
+    const h2=$('#walkHint');
+    if(h2){ h2.textContent='⚠️ Build failed: '+e.message+' — your notes are kept, fix & retry'; h2.style.color='var(--red)'; }
+    toast('Build failed: '+e.message);
   }
 }
 
