@@ -12,6 +12,7 @@
 <title>General Review — Site Walk</title>
 <script src="jszip.min.js"></script>
 <script src="pdf-lib.min.js"></script>
+<script src="pdf.min.js"></script>
 <style>
 :root{
   --bg:#0f1a17; --card:#182722; --card2:#1f322c; --line:#2b443c;
@@ -134,6 +135,7 @@ hr.s{border:none;border-top:1px solid var(--line);margin:14px 0}
 <input type="file" id="fileGen" accept="image/*" multiple hidden>
 <input type="file" id="fileSig" accept="image/*" hidden>
 <input type="file" id="fileImp" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+<input type="file" id="fileDocs" accept=".pdf,.txt" multiple hidden>
 
 <script>
 /* ======== embedded assets ======== */
@@ -376,11 +378,23 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 let dbp=null;
 function db(){ if(dbp) return dbp;
   dbp = new Promise((res,rej)=>{
-    const rq = indexedDB.open('grr-photos',1);
-    rq.onupgradeneeded = ()=> rq.result.createObjectStore('photos',{keyPath:'id'});
+    const rq = indexedDB.open('grr-photos',2);
+    rq.onupgradeneeded = ()=>{
+      const d=rq.result;
+      if(!d.objectStoreNames.contains('photos')) d.createObjectStore('photos',{keyPath:'id'});
+      if(!d.objectStoreNames.contains('docs')) d.createObjectStore('docs',{keyPath:'id'});
+    };
     rq.onsuccess = ()=>res(rq.result); rq.onerror = ()=>rej(rq.error);
   }); return dbp;
 }
+async function docsAdd(rec){ const d=await db(); return new Promise((res,rej)=>{
+  const tx=d.transaction('docs','readwrite'); tx.objectStore('docs').put(rec);
+  tx.oncomplete=res; tx.onerror=()=>rej(tx.error);});}
+async function docsAll(){ const d=await db(); return new Promise((res,rej)=>{
+  const rq=d.transaction('docs').objectStore('docs').getAll();
+  rq.onsuccess=()=>res(rq.result||[]); rq.onerror=()=>rej(rq.error);});}
+async function docsDel(id){ const d=await db(); return new Promise((res)=>{
+  const tx=d.transaction('docs','readwrite'); tx.objectStore('docs').delete(id); tx.oncomplete=res;});}
 async function photoPut(rec){ const d = await db(); return new Promise((res,rej)=>{
   const tx=d.transaction('photos','readwrite'); tx.objectStore('photos').put(rec);
   tx.oncomplete=res; tx.onerror=()=>rej(tx.error);});}
@@ -832,7 +846,7 @@ How to build the items:
 - Do not invent anything not in the notes.
 - Use OAA-appropriate report language and correct specification terminology; where the project specifications clearly identify the scope, cite the section (e.g. "as specified in Section 09 22 16").
 
-Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+specSuffix();
+Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+specSuffix()+await docSuffix(notes);
   try{
     const callModel=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
@@ -861,7 +875,7 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
     const nq=(out.super_questions||[]).filter(t=>t&&t.trim());
     if(!np.length && !no.length && !nq.length) throw new Error('nothing extracted');
     // consultant-referral items: replace the standing last item's wording, never sit mid-list
-    const isConsult=t=>/consultant/i.test(t)&&/(review|scope)/i.test(t);
+    const isConsult=t=>/(mechanical|electrical|sprinkler|structural|civil)/i.test(t)&&/consultant/i.test(t)&&/(respective scopes|continue review|refer to Consultant General Review)/i.test(t);
     const consult=np.filter(isConsult), normal=np.filter(t=>!isConsult(t));
     let boilerIdx=S.report.progress.findIndex(x=>x.boiler);
     if(consult.length){
@@ -893,6 +907,61 @@ function specSuffix(){
   const s=(S.settings.specText||'').trim();
   return s? '\n\nProject specification sections (use this terminology; cite a section number only where the scope clearly matches):\n'+s.slice(0,4000) : '';
 }
+/* ---- contract documents: import, chunk, retrieve ---- */
+async function importDocs(files){
+  for(const f of files){
+    try{
+      let text='';
+      if(/\.txt$/i.test(f.name)) text=await f.text();
+      else if(/\.pdf$/i.test(f.name)){
+        if(typeof pdfjsLib==='undefined') throw new Error('PDF reader not loaded — reload the app once online');
+        pdfjsLib.GlobalWorkerOptions.workerSrc='pdf.worker.min.js';
+        toast('Reading '+f.name+'…');
+        const pdf=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise;
+        for(let p=1;p<=pdf.numPages;p++){
+          const tc=await (await pdf.getPage(p)).getTextContent();
+          text+=tc.items.map(i=>i.str).join(' ')+'\n';
+          if(p%50===0) toast(f.name+' — page '+p+'/'+pdf.numPages);
+        }
+      } else { toast('Skipped '+f.name+' — PDF or TXT only'); continue; }
+      text=text.replace(/[ \t]+/g,' ').trim();
+      if(text.length<200){ toast(f.name+': no readable text (scanned drawings have none) — skipped'); continue; }
+      const chunks=[]; const SZ=1400, OV=200;
+      for(let i=0;i<text.length;i+=(SZ-OV)){
+        const t=text.slice(i,i+SZ);
+        const sec=(t.match(/\b\d{2}\s?\d{2}\s?\d{2}\b/)||[])[0]||'';
+        chunks.push({t,sec});
+        if(chunks.length>4000) break;
+      }
+      // harvest a section index into the spec box
+      const secs={}; const re=/\b(\d{2}\s?\d{2}\s?\d{2})\s+([A-Z][A-Za-z \-\/&(),]{4,60})/g; let m;
+      while((m=re.exec(text))) if(!secs[m[1]]) secs[m[1]]=m[2].trim();
+      const idx=Object.entries(secs).slice(0,150).map(([n,t])=>n+'  '+t).join('\n');
+      if(idx && !(S.settings.specText||'').includes(idx.slice(0,40)))
+        S.settings.specText=((S.settings.specText||'')+'\n'+idx).trim().slice(0,6000);
+      await docsAdd({id:uid(), name:f.name, chunkCount:chunks.length, chars:text.length, chunks});
+      toast('✓ '+f.name+' imported — '+chunks.length+' searchable passages');
+    }catch(e){ toast(f.name+': '+e.message); }
+  }
+  save(); render();
+}
+async function docSuffix(query){
+  let docs=[]; try{ docs=await docsAll(); }catch(e){}
+  if(!docs.length) return '';
+  const qw=new Set((String(query).toLowerCase().match(/[a-z]{4,}/g)||[]));
+  const scored=[];
+  for(const d of docs) for(const c of d.chunks){
+    const wset=new Set(c.t.toLowerCase().match(/[a-z]{4,}/g)||[]);
+    let s=0; for(const w of qw) if(wset.has(w)) s++;
+    if(s>=3) scored.push({s,c,name:d.name});
+  }
+  scored.sort((a,b)=>b.s-a.s);
+  const top=scored.slice(0,6);
+  if(!top.length) return '';
+  let out='\n\nRelevant excerpts from the project contract documents. Verify terminology and requirements against these and cite the specification section only where the scope clearly matches. If an observed condition appears to deviate from these excerpts, word it as an item to be reviewed/confirmed — never assert conformance or non-conformance beyond what the excerpts support:';
+  for(const x of top){ if(out.length>8500) break; out+='\n['+x.name+(x.c.sec?' §'+x.c.sec:'')+'] '+x.c.t; }
+  return out.slice(0,9000);
+}
 const AI_SYS = `You turn an Ontario architect's spoken field notes into ONE item for a General Review Report (OAA general review, Pro-Demnity-conscious wording). Output ONLY the finished item text — no item number, no preamble, no quotes.
 
 Style rules, matching the firm's reports:
@@ -922,7 +991,7 @@ async function aiCompose(raw){
       headers:{'content-type':'application/json','x-api-key':key,
         'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body: JSON.stringify({model:'claude-haiku-4-5-20251001', max_tokens:400,
-        system: AI_SYS+specSuffix(),
+        system: AI_SYS+specSuffix()+await docSuffix(raw),
         messages:[{role:'user',content:'Section: '+(WALKSEC==='progress'?'Progress of the Work':'Observations and Comments')+'\nSpoken notes:\n'+raw}]})
     });
     if(!resp.ok){
@@ -1493,9 +1562,12 @@ function renderSettings(m){
     <p class="note">Get a key at console.anthropic.com → API keys.</p>
   </div>
   <div class="card">
-    <h2>Specifications</h2>
-    <p class="note">Optional: paste the Project Manual's section index — or key excerpts — and AI-written items will use spec-compliant terminology and cite section numbers where clearly applicable.</p>
-    <textarea id="sSpec" style="min-height:100px" placeholder="e.g.&#10;07 21 13  Board Insulation&#10;07 27 00  Air Barriers&#10;09 22 16  Non-Structural Metal Framing&#10;…">${esc(st.specText||'')}</textarea>
+    <h2>Contract documents</h2>
+    <p class="note">Import the Project Manual / specifications and drawings (PDF). The app extracts their text; every AI-written item is then checked against the relevant passages — spec terminology, cited sections. Note: drawings contribute their notes and schedules only; the app does not visually review drawings, and apparent deviations are worded "to be reviewed", never as conformance findings.</p>
+    <button class="btn sec" id="docsBtn" style="margin-top:8px">📚 Import specs / drawings (PDF)</button>
+    <div id="docsList" style="margin-top:8px"></div>
+    <label class="f">Section index / key excerpts (auto-filled on import, editable)</label>
+    <textarea id="sSpec" style="min-height:100px" placeholder="e.g.&#10;07 21 13  Board Insulation&#10;09 22 16  Non-Structural Metal Framing&#10;…">${esc(st.specText||'')}</textarea>
   </div>
   <div class="card">
     <h2>Signature</h2>
@@ -1528,6 +1600,18 @@ function renderSettings(m){
   $('#sRows').onchange=e=>{ st.rows=Math.max(1,parseInt(e.target.value)||5); save(); };
   $('#sAiKey').onchange=e=>{ st.aiKey=e.target.value.trim(); save(); };
   $('#sSpec').onchange=e=>{ st.specText=e.target.value; save(); };
+  $('#docsBtn').onclick=()=>{ $('#fileDocs').onchange=e=>{ importDocs([...e.target.files]); e.target.value=''; }; $('#fileDocs').click(); };
+  (async()=>{
+    const el=$('#docsList'); if(!el)return;
+    let docs=[]; try{ docs=await docsAll(); }catch(e){}
+    el.innerHTML = docs.length? '' : '<p class="note">No documents imported yet.</p>';
+    docs.forEach(d=>{
+      el.insertAdjacentHTML('beforeend',
+        `<div class="dist-row"><input type="text" value="${esc(d.name)} — ${d.chunkCount} passages" disabled>
+         <button data-id="${d.id}" class="delDoc">✕</button></div>`);
+    });
+    el.querySelectorAll('.delDoc').forEach(b=>b.onclick=async()=>{ await docsDel(b.dataset.id); render(); });
+  })();
   $('#testAi').onclick=async()=>{
     st.aiKey=$('#sAiKey').value.trim(); save();
     if(!st.aiKey){ toast('Paste a key first'); return; }
