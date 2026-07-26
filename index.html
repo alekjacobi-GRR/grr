@@ -533,8 +533,8 @@ function renderWalk(m){
     </div>
   </div>
   <div class="seg">
-    <button id="segP" class="${WALKSEC==='progress'?'on':''}">Progress of the Work</button>
-    <button id="segO" class="${WALKSEC==='obs'?'on':''}">Observations &amp; Comments</button>
+    <button id="segP" class="${WALKSEC==='progress'?'on':''}">Progress of the Work (${prog.length})</button>
+    <button id="segO" class="${WALKSEC==='obs'?'on':''}">Observations &amp; Comments (${obs.length})</button>
   </div>
   <div class="card">
     <h2>New item <span class="badge">${nextNum}</span></h2>
@@ -560,7 +560,7 @@ function renderWalk(m){
       <button class="btn" id="saveItemBtn">✓ Save item</button>
     </div>
   </div>
-  <h2 class="secttl">This walk — ${prog.length+obs.length} item(s)</h2>
+  <h2 class="secttl">${WALKSEC==='progress'?'Progress of the Work':'Observations &amp; Comments'} — ${(WALKSEC==='progress'?prog:obs).length} item(s)</h2>
   <button class="btn sec small" id="cmdBtn" style="margin-bottom:10px;width:100%">🎛✨ AI command — say "move 18.1 to the end" or "mark 13.9 resolved"</button>
   <p class="hint" style="margin:0 0 8px">…or press ⠿ on an item and drag it to reorder. Numbers follow the order.</p>
   <div id="walkList"></div>`;
@@ -618,8 +618,10 @@ function saveItem(){
 async function drawWalkList(){
   const el=$('#walkList'); if(!el) return;
   const {prog, obs} = numbered();
-  const all=[...prog.map(x=>({...x,sec:'progress'})),...obs.map(x=>({...x,sec:'obs'}))];
-  if(!all.length){ el.innerHTML='<div class="empty">No items yet. Walk the job and start recording.</div>'; return; }
+  const all=(WALKSEC==='progress'
+    ? prog.map(x=>({...x,sec:'progress'}))
+    : obs.map(x=>({...x,sec:'obs'})));
+  if(!all.length){ el.innerHTML='<div class="empty">No '+(WALKSEC==='progress'?'progress':'observation')+' items yet — the other tab may have some.</div>'; return; }
   el.innerHTML='';
   for(const it of all){
     let thumbs='';
