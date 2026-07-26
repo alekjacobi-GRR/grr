@@ -333,6 +333,7 @@ const DEFAULTS = {
     contractor:"Corebuild Construction",
     present:"Alex Jacobi – Snyder Architects Inc.",
     aiKey:"",
+    specText:"",
     firm:"Snyder Architects Inc.",
     firmEmail:"ajacobi@snyderarchitects.ca",
     firmAddress:"Snyder Architects Inc., 260 King St. East, Suite A101, Toronto, Ontario M5A 4L5",
@@ -819,7 +820,8 @@ async function aiBuildFromWalk(){
 Respond with ONLY a JSON object: {"progress":["item text", ...], "observations":["item text", ...], "super_questions":["question", ...]}
 
 How to build the items:
-- GROUP related mentions across the whole walk into single items by trade/scope: if the speaker mentions interior steel stud framing on several floors at different moments, combine into ONE item, e.g. "Interior steel stud framing near completion at Levels 2 and 3; not started at Levels 6 and 7."
+- CRITICAL — ONE item per trade/assembly for the whole building. The architect walks floor by floor, so the same scope is mentioned many times; you MUST merge every mention of a given trade/scope into a single item stating status by level, e.g. "Interior steel stud framing near completion at Levels 2 and 3; underway at Levels 4 and 5; not started at Levels 6 and 7." Multiple items for the same scope on different floors is WRONG. Before finalizing, re-check the list and merge any items covering the same trade/scope.
+- Do NOT create an item that refers review to the Mechanical, Electrical, Structural or Civil consultants' scopes — the report carries a standing final item for that. If the narration combines such services' progress with a referral to the respective consultants, output it as a single item and it will be placed last.
 - Order items logically by trade/assembly, generally following construction sequence.
 - "progress" = status of work (underway, continuing, complete, not started, deliveries, mock-ups).
 - "observations" = deficiencies, nonconformances, concerns, items requiring correction, review or coordination — state the required follow-up and responsible party ("Contractor to correct and advise.", "Structural Consultant to review.").
@@ -828,8 +830,9 @@ How to build the items:
 - Stay in the architect's lane: no means and methods, no safety directives, refer other consultants' scopes to them.
 - Resolve self-corrections (keep only final intent). Ignore filler, asides, and conversation not meant for the report.
 - Do not invent anything not in the notes.
+- Use OAA-appropriate report language and correct specification terminology; where the project specifications clearly identify the scope, cite the section (e.g. "as specified in Section 09 22 16").
 
-Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`;
+Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+specSuffix();
   try{
     const callModel=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
@@ -857,10 +860,21 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
     const no=(out.observations||[]).filter(t=>t&&t.trim());
     const nq=(out.super_questions||[]).filter(t=>t&&t.trim());
     if(!np.length && !no.length && !nq.length) throw new Error('nothing extracted');
-    // insert progress items before the consultant-reference boiler item if it is last
-    const boilerIdx=S.report.progress.findIndex(x=>x.boiler);
-    const insertAt=(boilerIdx>=0 && boilerIdx===S.report.progress.length-1)?boilerIdx:S.report.progress.length;
-    S.report.progress.splice(insertAt,0,...np.map(t=>({id:uid(),text:t.trim(),photoIds:[]})));
+    // consultant-referral items: replace the standing last item's wording, never sit mid-list
+    const isConsult=t=>/consultant/i.test(t)&&/(review|scope)/i.test(t);
+    const consult=np.filter(isConsult), normal=np.filter(t=>!isConsult(t));
+    let boilerIdx=S.report.progress.findIndex(x=>x.boiler);
+    if(consult.length){
+      const txt=consult.join(' ');
+      if(boilerIdx>=0) S.report.progress[boilerIdx].text=txt;
+      else { S.report.progress.push({id:uid(),text:txt,photoIds:[],boiler:true}); boilerIdx=S.report.progress.length-1; }
+    }
+    // keep the standing consultant item last
+    if(boilerIdx>=0 && boilerIdx!==S.report.progress.length-1){
+      const [b]=S.report.progress.splice(boilerIdx,1); S.report.progress.push(b);
+    }
+    const insertAt=(S.report.progress.length&&S.report.progress[S.report.progress.length-1].boiler)?S.report.progress.length-1:S.report.progress.length;
+    S.report.progress.splice(insertAt,0,...normal.map(t=>({id:uid(),text:t.trim(),photoIds:[]})));
     no.forEach(t=>S.report.obs.push({id:uid(),text:t.trim(),photoIds:[]}));
     nq.forEach(t=>(S.report.superQs=S.report.superQs||[]).push({id:uid(),text:t.trim(),done:false}));
     S.report.walkNotes=[];
@@ -875,6 +889,10 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
 }
 
 /* ---- AI compose: spoken intent -> report-ready item ---- */
+function specSuffix(){
+  const s=(S.settings.specText||'').trim();
+  return s? '\n\nProject specification sections (use this terminology; cite a section number only where the scope clearly matches):\n'+s.slice(0,4000) : '';
+}
 const AI_SYS = `You turn an Ontario architect's spoken field notes into ONE item for a General Review Report (OAA general review, Pro-Demnity-conscious wording). Output ONLY the finished item text — no item number, no preamble, no quotes.
 
 Style rules, matching the firm's reports:
@@ -904,7 +922,7 @@ async function aiCompose(raw){
       headers:{'content-type':'application/json','x-api-key':key,
         'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body: JSON.stringify({model:'claude-haiku-4-5-20251001', max_tokens:400,
-        system: AI_SYS,
+        system: AI_SYS+specSuffix(),
         messages:[{role:'user',content:'Section: '+(WALKSEC==='progress'?'Progress of the Work':'Observations and Comments')+'\nSpoken notes:\n'+raw}]})
     });
     if(!resp.ok){
@@ -1475,6 +1493,11 @@ function renderSettings(m){
     <p class="note">Get a key at console.anthropic.com → API keys.</p>
   </div>
   <div class="card">
+    <h2>Specifications</h2>
+    <p class="note">Optional: paste the Project Manual's section index — or key excerpts — and AI-written items will use spec-compliant terminology and cite section numbers where clearly applicable.</p>
+    <textarea id="sSpec" style="min-height:100px" placeholder="e.g.&#10;07 21 13  Board Insulation&#10;07 27 00  Air Barriers&#10;09 22 16  Non-Structural Metal Framing&#10;…">${esc(st.specText||'')}</textarea>
+  </div>
+  <div class="card">
     <h2>Signature</h2>
     <p class="note">Auto-inserted on every report (extracted from your Report 17). Replace it any time.</p>
     <img src="data:image/png;base64,${st.sigCustom||SIG_B64}" style="height:60px;background:#fff;border-radius:8px;padding:6px;margin:8px 0;display:block">
@@ -1504,6 +1527,7 @@ function renderSettings(m){
   $('#sCols').onchange=e=>{ st.cols=Math.max(1,parseInt(e.target.value)||4); save(); };
   $('#sRows').onchange=e=>{ st.rows=Math.max(1,parseInt(e.target.value)||5); save(); };
   $('#sAiKey').onchange=e=>{ st.aiKey=e.target.value.trim(); save(); };
+  $('#sSpec').onchange=e=>{ st.specText=e.target.value; save(); };
   $('#testAi').onclick=async()=>{
     st.aiKey=$('#sAiKey').value.trim(); save();
     if(!st.aiKey){ toast('Paste a key first'); return; }
