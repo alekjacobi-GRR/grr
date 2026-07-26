@@ -767,7 +767,7 @@ function walkToggle(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ toast('Voice recognition unavailable on this browser'); return; }
   if(walkOn){ walkOn=false; try{ walkRecog.stop(); }catch(e){} return; }
-  if(!S.settings.aiKey){ toast('Walk mode needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  if(!S.settings.aiKey) toast('Note: recording works now, but building items later needs your API key (Setup)');
   walkOn=true; startWalkRec(SR);
   const b=$('#walkBtn'); if(b)b.classList.add('rec');
   const h=$('#walkHint'); if(h)h.textContent='● Recording the walk… tap to pause';
