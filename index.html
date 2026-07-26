@@ -835,18 +835,23 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
         headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
           'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:model,max_tokens:3000,system:SYS,
+        body:JSON.stringify({model:model,max_tokens:16000,system:SYS,
           messages:[{role:'user',content:'Walkthrough narration (segments separated by ---):\n'+notes}]})});
       const data=await resp.json().catch(()=>({}));
       return {resp,data};
     };
+    const extract=(data)=>{
+      const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+      return txt.match(/\{[\s\S]*\}/);
+    };
     let {resp,data}=await callModel('claude-sonnet-5');
-    if(!resp.ok && data.error && /model|not_found/i.test((data.error.type||'')+(data.error.message||''))){
+    let m = resp.ok ? extract(data) : null;
+    if(!m){ // model rejected, errored, or returned no usable JSON — retry on the fast model
       ({resp,data}=await callModel('claude-haiku-4-5-20251001'));
+      if(resp.ok) m=extract(data);
     }
     if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
-    const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
-    const m=txt.match(/\{[\s\S]*\}/); if(!m) throw new Error('no items returned');
+    if(!m) throw new Error('no items returned (stop: '+(data.stop_reason||'?')+')');
     const out=JSON.parse(m[0]);
     const np=(out.progress||[]).filter(t=>t&&t.trim());
     const no=(out.observations||[]).filter(t=>t&&t.trim());
