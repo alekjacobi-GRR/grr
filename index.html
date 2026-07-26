@@ -638,6 +638,7 @@ async function drawWalkList(){
       ${thumbs?`<div class="thumbs">${thumbs}</div>`:''}
       <div class="ops">
         <button class="btn small sec ed">✎ Edit</button>
+        <button class="btn small sec gr">Aa✓ Grammar</button>
         <button class="btn small sec ph">📷 Photo</button>
         <button class="btn small warn dl">🗑</button>
       </div>
@@ -648,6 +649,7 @@ async function drawWalkList(){
     const arr = sec==='progress'?S.report.progress:S.report.obs;
     const it = arr.find(x=>x.id===id);
     node.querySelector('.ed').onclick=()=>startInlineEdit(node, ()=>it.text, v=>{ it.text=v; save(); render(); });
+    node.querySelector('.gr').onclick=()=>aiGrammar(node, ()=>it.text, v=>{ it.text=v; save(); render(); });
     node.querySelector('.ph').onclick=()=>{ $('#fileItem').onchange=async e=>{
         const ids=await importFiles([...e.target.files], id);
         it.photoIds=(it.photoIds||[]).concat(ids); e.target.value=''; save(); render();
@@ -957,6 +959,29 @@ async function aiRewriteInline(ta, hint){
   try{ r.start(); }catch(e){}
 }
 
+/* ---- per-item grammar & terminology check ---- */
+async function aiGrammar(node, getText, setText){
+  if(!S.settings.aiKey){ toast('Grammar check needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  const cur=getText();
+  toast('Aa✓ Checking grammar & terminology…');
+  try{
+    const sys='You are correcting a single item from an Ontario architect\'s General Review Report. Fix ONLY: grammar, spelling, punctuation, capitalization, and misheard or phonetically transcribed construction terminology from voice capture — e.g. "zed girts"/"zed gert" → "Z-girts", "dough house" → "doghouse", "weeping tile" homophones, product or consultant names. Use the exact terms from the project specifications where provided. Do NOT change the item\'s meaning, scope, status, quantities, percentages or locations, and do NOT add or remove content. Output ONLY the corrected item text — if nothing needs correcting, output the item unchanged.'+STYLE_RULES+specSuffix()+await docSuffix(cur);
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+      headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+        'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,system:sys,
+        messages:[{role:'user',content:cur}]})});
+    const data=await resp.json();
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
+    const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+    if(!text) throw new Error('empty response');
+    if(text===cur){ toast('Aa✓ No corrections needed'); return; }
+    startInlineEdit(node, ()=>text, setText);
+    const h=node.querySelector('.ie-hint');
+    if(h) h.textContent='Aa✓ Corrected — review and Save, or ✕ to keep the original';
+  }catch(e){ toast('Grammar check failed: '+e.message); }
+}
+
 /* ---- AI compose: spoken intent -> report-ready item ---- */
 function specSuffix(){
   const s=(S.settings.specText||'').trim();
@@ -1000,13 +1025,16 @@ async function importDocs(files){
   }
   save(); render();
 }
+function docTokens(s){
+  return (String(s).toLowerCase().match(/[a-z]{4,}|\d{2,}/g)||[]).map(w=>w.replace(/(es|s)$/,''));
+}
 async function docSuffix(query){
   let docs=[]; try{ docs=await docsAll(); }catch(e){}
   if(!docs.length) return '';
-  const qw=new Set((String(query).toLowerCase().match(/[a-z]{4,}/g)||[]));
+  const qw=new Set(docTokens(query));
   const scored=[];
   for(const d of docs) for(const c of d.chunks){
-    const wset=new Set(c.t.toLowerCase().match(/[a-z]{4,}/g)||[]);
+    const wset=new Set(docTokens(c.t));
     let s=0; for(const w of qw) if(wset.has(w)) s++;
     if(s>=3) scored.push({s,c,name:d.name});
   }
@@ -1188,12 +1216,14 @@ function renderPrev(m){
       <div class="ops">
         <button class="btn small ${p.resolved?'sec':''}" data-i="${i}" data-op="res">${p.resolved?'↩︎ Reopen':'✓ Resolved'}</button>
         <button class="btn small sec" data-i="${i}" data-op="ed">✎ Update</button>
+        <button class="btn small sec" data-i="${i}" data-op="gr">Aa✓</button>
       </div>
     </div>`);
   });
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{
     const p=S.report.prev[+b.dataset.i];
     if(b.dataset.op==='res'){ p.resolved=!p.resolved; save(); render(); }
+    else if(b.dataset.op==='gr') aiGrammar(b.closest('.item'), ()=>p.text, v=>{ p.text=v; save(); render(); });
     else startInlineEdit(b.closest('.item'), ()=>p.text, v=>{ p.text=v; save(); render(); });
   });
   $('#addPrevBtn').onclick=()=>{
@@ -1269,6 +1299,7 @@ function renderReport(m){
     <h2>Preview — Report No. ${S.report.number}</h2>
     <div class="preview" id="prevDoc"></div>
     <button class="btn sec" id="recheckBtn" style="margin-top:10px">✔️ Re-check wording against specs &amp; drawings</button>
+    <button class="btn sec" id="grammarAllBtn" style="margin-top:8px">Aa✓ Grammar check — all items</button>
     <p class="hint" id="recheckHint"></p>
     <div class="gate">
       <b>Is this ready to go to print?</b>
@@ -1292,6 +1323,7 @@ function renderReport(m){
   m.querySelectorAll('.dt').forEach(inp=>inp.onchange=e=>{ S.report.dates[+e.target.dataset.i]=e.target.value; save(); setHeader(); });
   m.querySelectorAll('.dx').forEach(b=>b.onclick=()=>{ S.report.dates.splice(+b.dataset.i,1); save(); render(); });
   $('#recheckBtn').onclick=aiRecheck;
+  $('#grammarAllBtn').onclick=aiGrammarAll;
   $('#notReady').onclick=()=>{ gateOK=false; $('#genOut').innerHTML=''; toast('OK — adjust, then come back'); };
   $('#readyBtn').onclick=async()=>{ gateOK=true; await generateAll(); };
   $('#closeOut').onclick=closeOut;
@@ -1377,6 +1409,52 @@ Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], 
     const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Check failed: '+e.message; h2.style.color='var(--red)'; }
   }
   if(btn)btn.disabled=false;
+}
+
+/* ---- master grammar pass over the whole report ---- */
+async function aiGrammarAll(){
+  if(!S.settings.aiKey){ toast('Needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  const {prog,obs}=numbered();
+  const prevRaw=S.report.prev.map(p=>({num:p.num,text:p.text}));
+  const items=[...prog.map(x=>({num:x.num,text:x.text})),...obs.map(x=>({num:x.num,text:x.text})),...prevRaw];
+  if(!items.length){ toast('No items yet'); return; }
+  const h=$('#recheckHint'); if(h){ h.textContent='Aa✓ Grammar-checking '+items.length+' items…'; h.style.color=''; }
+  const btn=$('#grammarAllBtn'); if(btn)btn.disabled=true;
+  const SYS='You are correcting items from an Ontario architect\'s General Review Report. For each item fix ONLY: grammar, spelling, punctuation, capitalization (including compass directions per the style rule), and misheard or phonetically transcribed construction terminology from voice capture (e.g. "zed girts" → "Z-girts", "dough house" → "doghouse"). Use exact terms from the project specifications where provided. Do NOT change meaning, scope, status, quantities, percentages, locations or item numbers; do NOT add or remove content. Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<corrected text>"}]} — include ONLY items you actually changed.'+STYLE_RULES+specSuffix()+await docSuffix(items.map(x=>x.text).join(' '));
+  try{
+    const call=async(model)=>{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model,max_tokens:16000,system:SYS,
+          messages:[{role:'user',content:'Report items:\n'+items.map(x=>x.num+'\t'+x.text).join('\n')}]})});
+      const data=await resp.json().catch(()=>({}));
+      return {resp,data};
+    };
+    let {resp,data}=await call('claude-sonnet-5');
+    let txt=resp.ok?(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''):'';
+    let m=txt.match(/\{[\s\S]*\}/);
+    if(!m){ ({resp,data}=await call('claude-haiku-4-5-20251001'));
+      if(resp.ok){ txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''); m=txt.match(/\{[\s\S]*\}/); } }
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
+    if(!m) throw new Error('no result');
+    const out=JSON.parse(m[0]);
+    let changed=0; const touched=[];
+    (out.items||[]).forEach(rev=>{
+      if(!rev.num||!rev.text) return;
+      const f=findByNum(rev.num);
+      if(f){ const it=f.arr[f.idx]; if(it.text!==rev.text.trim()){ it.text=rev.text.trim(); changed++; touched.push(rev.num); } return; }
+      const p=S.report.prev.find(x=>x.num===rev.num);
+      if(p && p.text!==rev.text.trim()){ p.text=rev.text.trim(); changed++; touched.push(rev.num); }
+    });
+    save(); render();
+    const h2=$('#recheckHint');
+    if(h2) h2.textContent = changed? ('Aa✓ Corrected '+changed+' item(s): '+touched.join(', ')) : 'Aa✓ Checked — no corrections needed';
+    toast(changed? changed+' item(s) corrected — review them' : 'All items clean');
+  }catch(e){
+    const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Grammar check failed: '+e.message; h2.style.color='var(--red)'; }
+  }
+  const btn2=$('#grammarAllBtn'); if(btn2)btn2.disabled=false;
 }
 
 async function closeOut(){
