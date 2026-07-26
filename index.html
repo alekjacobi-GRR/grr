@@ -133,6 +133,7 @@ hr.s{border:none;border-top:1px solid var(--line);margin:14px 0}
 <input type="file" id="fileItem" accept="image/*" multiple hidden>
 <input type="file" id="fileGen" accept="image/*" multiple hidden>
 <input type="file" id="fileSig" accept="image/*" hidden>
+<input type="file" id="fileImp" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
 
 <script>
 /* ======== embedded assets ======== */
@@ -1402,7 +1403,21 @@ function renderSettings(m){
       <input type="text" value="${esc(d.email)}" data-i="${i}" data-k="email" placeholder="email">
       <button data-i="${i}" class="delDist">✕</button>
     </div>`).join('');
+  const impUI = IMP ? `
+    <div class="item" style="margin-top:10px">
+      <span class="num">GRR No. ${IMP.number}</span>
+      <p>${IMP.prog.length} progress · ${IMP.obs.length} observations · ${IMP.prev.length} previous/unresolved — ${esc(IMP.name)}</p>
+      <button class="btn" id="impNext">➜ Create next report (No. ${IMP.number+1})</button>
+      <button class="btn sec small" id="impLoad" style="margin-top:6px">Load No. ${IMP.number} as current instead</button>
+      <button class="btn sec small" id="impCancel" style="margin-top:6px">Dismiss</button>
+    </div>` : '';
   m.innerHTML=`
+  <div class="card" style="border-color:var(--teal-dk)">
+    <h2>Import a report</h2>
+    <p class="note">Drop in a previous General Review Report (.docx — e.g. 1807_grr_18.docx). The app reads its items and project details, then you can create the next report from it: observations &amp; unresolved deficiencies carry forward under their original numbers, and the report number advances.</p>
+    <button class="btn sec" id="impBtn" style="margin-top:8px">📄 Import report (.docx)</button>
+    ${impUI}
+  </div>
   <div class="card">
     <h2>Project</h2>
     <label class="f">Name of project</label><input type="text" id="sProject" value="${esc(st.project)}">
@@ -1448,6 +1463,12 @@ function renderSettings(m){
     <h2>Danger zone</h2>
     <button class="btn warn" id="wipe">Reset app (clears everything)</button>
   </div>`;
+  $('#impBtn').onclick=()=>{ $('#fileImp').onchange=e=>{
+      const f=e.target.files[0]; if(f) importReport(f); e.target.value='';
+    }; $('#fileImp').click(); };
+  const iN=$('#impNext'); if(iN)iN.onclick=importCreateNext;
+  const iL=$('#impLoad'); if(iL)iL.onclick=importLoadCurrent;
+  const iC=$('#impCancel'); if(iC)iC.onclick=()=>{ IMP=null; render(); };
   const bind=(id,key)=>{ $('#'+id).onchange=e=>{ st[key]=e.target.value; save(); setHeader(); }; };
   bind('sProject','project'); bind('sLocation','location'); bind('sProjNo','projNo');
   bind('sPermit','permit'); bind('sContractor','contractor'); bind('sPresent','present');
@@ -1487,6 +1508,87 @@ function renderSettings(m){
     localStorage.removeItem('grr-state-v1'); await photoClearAll();
     location.reload();
   };
+}
+
+/* ---- import a previous report (.docx) ---- */
+let IMP=null;
+async function importReport(file){
+  try{
+    if(!/\.docx$/i.test(file.name)) throw new Error('Please use the .docx version of the report (not the PDF)');
+    const zip=await JSZip.loadAsync(file);
+    const f=zip.file('word/document.xml'); if(!f) throw new Error('Not a Word document');
+    const xml=await f.async('string');
+    const paras=xml.split('</w:p>').map(p=>{
+      const p2=p.replace(/<w:tab[^>]*\/>/g,'<w:t>\t</w:t>');
+      const t=(p2.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/g)||[]).map(x=>x.replace(/<[^>]+>/g,'')).join('');
+      return t.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').trim();
+    }).filter(Boolean);
+    const all=paras.join('\n');
+    const num=(all.match(/Report Number:\s*(\d+)/)||[])[1];
+    if(!num) throw new Error('Could not find "Report Number:" in the document');
+    const g=(re)=>{ const m=all.match(re); return m?m[1].trim():null; };
+    const hdr={
+      project:g(/Name of Project:\s*\t?([^\n\t]+)/),
+      location:g(/Location of Project:\s*\t?([^\n\t]+)/),
+      projNo:g(/Consultant Project No\.:\s*\t?([^\n\t]+)/),
+      permit:g(/Building Permit No\.:\s*\t?([^\n\t]+)/),
+      contractor:g(/Contractor:\s*\t?([^\n\t]+)/),
+      present:g(/Present:\s*\t?([^\n\t]+)/)
+    };
+    let sec=null; const prog=[],obs=[],prev=[];
+    for(const p of paras){
+      if(/PROGRESS OF THE WORK/i.test(p)){sec='p';continue;}
+      if(/OBSERVATIONS AND COMMENTS/i.test(p)){sec='o';continue;}
+      if(/PREVIOUS AND UNRESOLVED/i.test(p)){sec='v';continue;}
+      const m=p.match(/^(\d+\.\d+)[\s\t]+([\s\S]+)/);
+      if(sec&&m){
+        const it={num:m[1],text:m[2].replace(/\s+/g,' ').trim()};
+        (sec==='p'?prog:sec==='o'?obs:prev).push(it);
+      }
+    }
+    if(!prog.length&&!obs.length&&!prev.length) throw new Error('No numbered report items found');
+    IMP={number:parseInt(num),hdr,prog,obs,prev,name:file.name};
+    render();
+    toast('Read GRR No. '+num+' — choose what to do with it');
+  }catch(e){ toast('Import failed: '+e.message); }
+}
+function importApplyHdr(){
+  const h=IMP.hdr;
+  for(const k of ['project','location','projNo','permit','contractor','present'])
+    if(h[k]) S.settings[k]=h[k];
+}
+async function importClearPhotos(){
+  for(const id of S.report.generalPhotoIds||[]) await photoDel(id);
+  for(const o of [...(S.report.progress||[]),...(S.report.obs||[])])
+    for(const pid of o.photoIds||[]) await photoDel(pid);
+}
+async function importCreateNext(){
+  if(!IMP) return;
+  if(!confirm('Create Report No. '+(IMP.number+1)+' from '+IMP.name+'?\n\nObservations & unresolved deficiencies carry forward; the current in-app report and its photos are replaced. Walk-mode recordings and super questions are kept.')) return;
+  const carried=IMP.prev.map(x=>({num:x.num,text:x.text,resolved:false}))
+    .concat(IMP.obs.map(x=>({num:x.num,text:x.text,resolved:false})));
+  await importClearPhotos();
+  const keepWalk=S.report.walkNotes||[], keepQs=S.report.superQs||[];
+  importApplyHdr();
+  S.report=freshReport(IMP.number+1, carried);
+  S.report.walkNotes=keepWalk; S.report.superQs=keepQs;
+  const n=S.report.number; IMP=null; save(); TAB='report'; render();
+  toast('Report No. '+n+' set up — what date(s) do the visits apply to? Enter them here.');
+}
+async function importLoadCurrent(){
+  if(!IMP) return;
+  if(!confirm('Load '+IMP.name+' as the current report? The current in-app report and its photos are replaced.')) return;
+  await importClearPhotos();
+  importApplyHdr();
+  const boilRe=/For Mechanical, Electrical/i;
+  const keepWalk=S.report.walkNotes||[], keepQs=S.report.superQs||[];
+  S.report={number:IMP.number,dates:[],times:'10:00 a.m.',
+    progress:IMP.prog.map(x=>({id:uid(),text:x.text,photoIds:[],boiler:boilRe.test(x.text)})),
+    obs:IMP.obs.map(x=>({id:uid(),text:x.text,photoIds:[]})),
+    prev:IMP.prev.map(x=>({num:x.num,text:x.text,resolved:false})),
+    generalPhotoIds:[],walkNotes:keepWalk,superQs:keepQs};
+  const n=S.report.number; IMP=null; save(); TAB='report'; render();
+  toast('Report No. '+n+' loaded — set its visit dates');
 }
 
 /* ---- wake lock ---- */
