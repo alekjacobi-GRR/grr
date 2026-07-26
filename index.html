@@ -846,8 +846,9 @@ How to build the items:
 - Resolve self-corrections (keep only final intent). Ignore filler, asides, and conversation not meant for the report.
 - Do not invent anything not in the notes.
 - Use OAA-appropriate report language and correct specification terminology; where the project specifications clearly identify the scope, cite the section (e.g. "as specified in Section 09 22 16").
+- Capitalize compass directions when identifying elevations, walls or areas ("North elevation", "East and West elevations") and capitalize "Level(s)" when numbered.
 
-Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+specSuffix()+await docSuffix(notes);
+Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+STYLE_RULES+specSuffix()+await docSuffix(notes);
   try{
     const callModel=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
@@ -903,6 +904,9 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
   }
 }
 
+/* ---- shared AI style rules ---- */
+const STYLE_RULES='\nStyle: capitalize compass directions when identifying elevations, walls or areas — "North elevation", "South wall", "East and West elevations" — consistent with the drawing conventions. Capitalize "Level"/"Levels" when numbered (Level 2, Levels 6 and 7).';
+
 /* ---- inline item editor with spoken AI rewrite ---- */
 function startInlineEdit(node, getText, setText){
   if(node.querySelector('.inline-ed')) return;
@@ -934,7 +938,7 @@ async function aiRewriteInline(ta, hint){
         headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
           'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
         body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,
-          system:'You rewrite a single General Review Report item for an Ontario architect. Apply the spoken instruction to the current item. Keep the concise, past-tense observational OAA report voice; stay within the architect\'s lane (no means and methods; refer other consultants\' scopes to them). Output ONLY the revised item text — no preamble, no quotes.'+specSuffix(),
+          system:'You rewrite a single General Review Report item for an Ontario architect. Apply the spoken instruction to the current item. Keep the concise, past-tense observational OAA report voice; stay within the architect\'s lane (no means and methods; refer other consultants\' scopes to them). Output ONLY the revised item text — no preamble, no quotes.'+STYLE_RULES+specSuffix(),
           messages:[{role:'user',content:'Current item:\n'+ta.value+'\n\nSpoken instruction:\n'+instr}]})});
       const data=await resp.json();
       if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
@@ -1042,7 +1046,7 @@ async function aiCompose(raw){
       headers:{'content-type':'application/json','x-api-key':key,
         'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body: JSON.stringify({model:'claude-haiku-4-5-20251001', max_tokens:400,
-        system: AI_SYS+specSuffix()+await docSuffix(raw),
+        system: AI_SYS+STYLE_RULES+specSuffix()+await docSuffix(raw),
         messages:[{role:'user',content:'Section: '+(WALKSEC==='progress'?'Progress of the Work':'Observations and Comments')+'\nSpoken notes:\n'+raw}]})
     });
     if(!resp.ok){
@@ -1338,7 +1342,7 @@ async function aiRecheck(){
 - add a specification section citation where the scope clearly matches (e.g. "as specified in Section 09 22 16");
 - if the described condition appears to deviate from the excerpts, append that it is to be reviewed against the cited section.
 Do NOT change an item's meaning, scope, status, or numbering, and do NOT add or remove items or invent content. Keep the concise past-tense observational voice; stay within the architect's lane (no means and methods, no conformance assertions).
-Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], "notes":["<short note on anything flagged>"]} — include ONLY items you actually changed.`+specSuffix()+docsSuf;
+Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], "notes":["<short note on anything flagged>"]} — include ONLY items you actually changed.`+STYLE_RULES+specSuffix()+docsSuf;
   try{
     const call=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
