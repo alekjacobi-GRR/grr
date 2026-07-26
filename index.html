@@ -511,6 +511,11 @@ function renderWalk(m){
       <button class="btn" id="buildBtn" ${wWords?'':'disabled'}>✨ Build report items from walk</button>
       ${wWords?'<button class="btn sec small" id="clearWalkBtn" style="flex:0 0 auto">🗑</button>':''}
     </div>
+    <button class="btn sec small" id="pasteBtn" style="margin-top:8px;width:100%">📋 Paste a transcript instead (Voice Memos, Notes…)</button>
+    <div id="pasteBox" style="display:none;margin-top:8px">
+      <textarea id="transBox" placeholder="Paste the walkthrough transcript here — progress, observations and 'ask the super…' items all mixed together is fine. AI sorts them."></textarea>
+      <button class="btn" id="transBuild" style="margin-top:8px">✨ Sort &amp; build items from transcript</button>
+    </div>
   </div>
   <div class="seg">
     <button id="segP" class="${WALKSEC==='progress'?'on':''}">Progress of the Work</button>
@@ -555,6 +560,14 @@ function renderWalk(m){
   $('#walkBtn').onclick=walkToggle;
   $('#buildBtn').onclick=aiBuildFromWalk;
   const cw=$('#clearWalkBtn'); if(cw)cw.onclick=()=>{ if(confirm('Discard the recorded walk notes?')){ S.report.walkNotes=[]; save(); render(); } };
+  $('#pasteBtn').onclick=()=>{ const pb=$('#pasteBox'); pb.style.display = pb.style.display==='none'?'':'none'; };
+  $('#transBuild').onclick=()=>{
+    const t=$('#transBox').value.trim();
+    if(!t){ toast('Paste the transcript first'); return; }
+    (S.report.walkNotes=S.report.walkNotes||[]).push(t);
+    $('#transBox').value=''; save();
+    aiBuildFromWalk();
+  };
   if(walkOn){ const b=$('#walkBtn'); if(b)b.classList.add('rec'); const h=$('#walkHint'); if(h)h.textContent='● Recording the walk… tap to pause'; }
   $('#addPhotoBtn').onclick=()=>{ $('#fileItem').onchange=async e=>{
       const ids = await importFiles([...e.target.files],'pending');
@@ -803,13 +816,14 @@ async function aiBuildFromWalk(){
   const btn=$('#buildBtn'); if(btn)btn.disabled=true;
   const SYS=`You turn an Ontario architect's recorded site-walkthrough narration into items for General Review Report (OAA general review, Pro-Demnity-conscious wording).
 
-Respond with ONLY a JSON object: {"progress":["item text", ...], "observations":["item text", ...]}
+Respond with ONLY a JSON object: {"progress":["item text", ...], "observations":["item text", ...], "super_questions":["question", ...]}
 
 How to build the items:
 - GROUP related mentions across the whole walk into single items by trade/scope: if the speaker mentions interior steel stud framing on several floors at different moments, combine into ONE item, e.g. "Interior steel stud framing near completion at Levels 2 and 3; not started at Levels 6 and 7."
 - Order items logically by trade/assembly, generally following construction sequence.
 - "progress" = status of work (underway, continuing, complete, not started, deliveries, mock-ups).
 - "observations" = deficiencies, nonconformances, concerns, items requiring correction, review or coordination — state the required follow-up and responsible party ("Contractor to correct and advise.", "Structural Consultant to review.").
+- "super_questions" = questions or points the speaker wants to raise, ask, confirm or discuss with the site superintendent ("ask the super…", "need to confirm with…", "what's happening with…") — concise questions, NOT report items. These never go in progress or observations.
 - Concise, factual, past-tense observational voice ("observed", "noted"). 1–3 sentences per item.
 - Stay in the architect's lane: no means and methods, no safety directives, refer other consultants' scopes to them.
 - Resolve self-corrections (keep only final intent). Ignore filler, asides, and conversation not meant for the report.
@@ -829,15 +843,17 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
     const out=JSON.parse(m[0]);
     const np=(out.progress||[]).filter(t=>t&&t.trim());
     const no=(out.observations||[]).filter(t=>t&&t.trim());
-    if(!np.length && !no.length) throw new Error('nothing extracted');
+    const nq=(out.super_questions||[]).filter(t=>t&&t.trim());
+    if(!np.length && !no.length && !nq.length) throw new Error('nothing extracted');
     // insert progress items before the consultant-reference boiler item if it is last
     const boilerIdx=S.report.progress.findIndex(x=>x.boiler);
     const insertAt=(boilerIdx>=0 && boilerIdx===S.report.progress.length-1)?boilerIdx:S.report.progress.length;
     S.report.progress.splice(insertAt,0,...np.map(t=>({id:uid(),text:t.trim(),photoIds:[]})));
     no.forEach(t=>S.report.obs.push({id:uid(),text:t.trim(),photoIds:[]}));
+    nq.forEach(t=>(S.report.superQs=S.report.superQs||[]).push({id:uid(),text:t.trim(),done:false}));
     S.report.walkNotes=[];
     save(); render();
-    toast('✨ '+np.length+' progress + '+no.length+' observation item(s) built — review, drag, edit');
+    toast('✨ Built: '+np.length+' progress · '+no.length+' observation(s)'+(nq.length?' · '+nq.length+' super question(s) → Super tab':'')+' — review & edit');
   }catch(e){
     if(btn)btn.disabled=false;
     const h2=$('#walkHint'); if(h2)h2.textContent='Tap to start recording the walk';
