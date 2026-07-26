@@ -1214,6 +1214,8 @@ function renderReport(m){
   <div class="card">
     <h2>Preview — Report No. ${S.report.number}</h2>
     <div class="preview" id="prevDoc"></div>
+    <button class="btn sec" id="recheckBtn" style="margin-top:10px">✔️ Re-check wording against specs &amp; drawings</button>
+    <p class="hint" id="recheckHint"></p>
     <div class="gate">
       <b>Is this ready to go to print?</b>
       <p class="note">Review the document above — check wording, item numbers, dates and photo rotation. Fix photos in the Photos tab, wording in Walk / Previous tabs.</p>
@@ -1235,6 +1237,7 @@ function renderReport(m){
   $('#addDate').onclick=()=>{ S.report.dates.push(''); save(); render(); };
   m.querySelectorAll('.dt').forEach(inp=>inp.onchange=e=>{ S.report.dates[+e.target.dataset.i]=e.target.value; save(); setHeader(); });
   m.querySelectorAll('.dx').forEach(b=>b.onclick=()=>{ S.report.dates.splice(+b.dataset.i,1); save(); render(); });
+  $('#recheckBtn').onclick=aiRecheck;
   $('#notReady').onclick=()=>{ gateOK=false; $('#genOut').innerHTML=''; toast('OK — adjust, then come back'); };
   $('#readyBtn').onclick=async()=>{ gateOK=true; await generateAll(); };
   $('#closeOut').onclick=closeOut;
@@ -1270,6 +1273,58 @@ async function drawPreview(){
    <h3>PHOTO ARRAY (${S.settings.cols} × ${S.settings.rows} / page)</h3>
    <div class="parr" style="grid-template-columns:repeat(${S.settings.cols},1fr)">${genThumbs||'<span style="color:#999;font-size:11px">— no photos yet —</span>'}</div>`;
 }
+/* ---- re-check existing items against contract documents ---- */
+async function aiRecheck(){
+  if(!S.settings.aiKey){ toast('Needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  const {prog,obs}=numbered();
+  const items=[...prog,...obs];
+  if(!items.length){ toast('No items to check yet'); return; }
+  const docsSuf=await docSuffix(items.map(x=>x.text).join(' '));
+  if(!docsSuf && !(S.settings.specText||'').trim()){ toast('Import specs/drawings in Setup first'); return; }
+  const h=$('#recheckHint'); if(h){ h.textContent='✔️ Checking '+items.length+' items against the contract documents…'; h.style.color=''; }
+  const btn=$('#recheckBtn'); if(btn)btn.disabled=true;
+  const SYS=`You are refining existing General Review Report items for an Ontario architect against the project contract documents. For each item, ONLY:
+- correct terminology to match the specifications;
+- add a specification section citation where the scope clearly matches (e.g. "as specified in Section 09 22 16");
+- if the described condition appears to deviate from the excerpts, append that it is to be reviewed against the cited section.
+Do NOT change an item's meaning, scope, status, or numbering, and do NOT add or remove items or invent content. Keep the concise past-tense observational voice; stay within the architect's lane (no means and methods, no conformance assertions).
+Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], "notes":["<short note on anything flagged>"]} — include ONLY items you actually changed.`+specSuffix()+docsSuf;
+  try{
+    const call=async(model)=>{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model,max_tokens:16000,system:SYS,
+          messages:[{role:'user',content:'Report items:\n'+items.map(x=>x.num+'\t'+x.text).join('\n')}]})});
+      const data=await resp.json().catch(()=>({}));
+      return {resp,data};
+    };
+    let {resp,data}=await call('claude-sonnet-5');
+    let txt=resp.ok?(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''):'';
+    let m=txt.match(/\{[\s\S]*\}/);
+    if(!m){ ({resp,data}=await call('claude-haiku-4-5-20251001'));
+      if(resp.ok){ txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''); m=txt.match(/\{[\s\S]*\}/); } }
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
+    if(!m) throw new Error('no result (stop: '+(data.stop_reason||'?')+')');
+    const out=JSON.parse(m[0]);
+    let changed=0;
+    (out.items||[]).forEach(rev=>{
+      if(!rev.num||!rev.text) return;
+      const hit=[...prog,...obs].find(x=>x.num===rev.num); if(!hit) return;
+      const arr=prog.includes(hit)?S.report.progress:S.report.obs;
+      const it=arr.find(i=>i.id===hit.id);
+      if(it && it.text!==rev.text.trim()){ it.text=rev.text.trim(); changed++; }
+    });
+    save(); render();
+    const h2=$('#recheckHint');
+    if(h2) h2.textContent = changed? ('✔️ '+changed+' item(s) updated against the documents'+((out.notes||[]).length?' — '+(out.notes||[]).join(' · ').slice(0,200):'')) : '✔️ Checked — no changes needed';
+    toast(changed? changed+' item(s) refined — review the wording' : 'Checked — items already consistent');
+  }catch(e){
+    const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Check failed: '+e.message; h2.style.color='var(--red)'; }
+  }
+  if(btn)btn.disabled=false;
+}
+
 async function closeOut(){
   if(!confirm('Close out Report '+S.report.number+' and start Report '+(S.report.number+1)+'? Make sure you have generated and saved the Word + PDF first.')) return;
   const N=S.report.number;
