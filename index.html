@@ -977,7 +977,7 @@ How to build the items:
 - Use OAA-appropriate report language and correct specification terminology; where the project specifications clearly identify the scope, cite the section (e.g. "as specified in Section 09 22 16").
 - Capitalize compass directions when identifying elevations, walls or areas ("North elevation", "East and West elevations") and capitalize "Level(s)" when numbered.
 
-Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+STYLE_RULES+ROOM_RULE+scopeSuffix()+specSuffix()+await docSuffix(notes);
+Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+STYLE_RULES+ROOM_RULE+await roomSuffix()+scopeSuffix()+specSuffix()+await docSuffix(notes);
   try{
     const callModel=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
@@ -1037,6 +1037,34 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
 const STYLE_RULES='\nStyle: capitalize compass directions when identifying elevations, walls or areas — "North elevation", "South wall", "East and West elevations" — consistent with the drawing conventions. Capitalize "Level"/"Levels" when numbered (Level 2, Levels 6 and 7).';
 /* rooms and areas must carry their drawing name + number */
 const ROOM_RULE='\nRooms and areas: where the provided contract-document excerpts identify a room or area\'s proper name and room number, use them in place of colloquial names — e.g. "the neutralization room" becomes "Acid Neutralizer 111B" where the drawings label it so. Keep the drawing\'s exact name and number format. If the excerpts do not identify the room, keep the original wording — never invent a room name or number.';
+/* room directory harvested from the drawings — retrieval on drawing text is unreliable (dimension noise), so rooms get their own index */
+function harvestRooms(text){
+  const out={};
+  const bad=/^(SCALE|DATE|SHEET|DWG|DRAWING|DETAIL|SECTION|NOTE|NOTES|TYP|REV|NO|PROJECT|NORTH|SOUTH|EAST|WEST|PLAN|LEVEL|FLOOR|GRID|ROOM|AREA|EXISTING|NEW|PART|PHASE|TYPE|ZONE|MARK|ISSUED|CONTRACT|GENERAL|LEGEND|KEY)$/;
+  const re=/\b([A-Z][A-Z&/'\-\.]{1,}(?: [A-Z][A-Z&/'\-\.]{1,}){0,3})[ :\-]+(\d{1,4}[A-Z]?)\b/g;
+  let m;
+  while((m=re.exec(text))){
+    const name=m[1].trim(), num=m[2];
+    if(name.length<4 || /^\d/.test(name) || bad.test(name)) continue;
+    if(/^(19|20)\d\d$/.test(num)) continue;
+    const hasSuffix=/[A-Z]$/.test(num);
+    const roomy=/(ROOM|OFFICE|STOR|CORRIDOR|LOBBY|VESTIBULE|WASHROOM|JAN|MECH|ELEC|KITCHEN|CLASS|GYM|STAIR|ELEVATOR|LAB|SHOP|CUST|RECEP|LIBRARY|CAFETERIA|CHANGE|SERVER|NEUTRALIZER|UTILITY|BOILER|SPRINKLER|GARBAGE|REFUSE|SUITE|UNIT)/.test(name);
+    if(!hasSuffix && !roomy && num.length<3) continue;
+    const key=name+' '+num;
+    out[key]=(out[key]||0)+1;
+  }
+  return Object.entries(out).sort((a,b)=>b[1]-a[1]).map(([k])=>k);
+}
+async function roomSuffix(){
+  if(S.settings.roomIndex===undefined){
+    // one-time build from documents already imported before this feature existed
+    let all='';
+    try{ (await docsAll()).forEach(d=>d.chunks.forEach(c=>{ all+=c.t+'\n'; })); }catch(e){}
+    S.settings.roomIndex=harvestRooms(all).slice(0,150).join('\n'); save();
+  }
+  const r=(S.settings.roomIndex||'').trim();
+  return r? '\n\nRoom/area directory extracted from the project drawings — when an item refers to one of these rooms or areas, identify it by this exact name and number. The list may contain some non-room noise from drawing text; apply judgment and never invent a room that is not clearly the one meant:\n'+r.slice(0,4000) : '';
+}
 /* learned out-of-scope examples — grows every time the architect confirms "does not belong in a general review" */
 function scopeSuffix(){
   const ex=(S.settings.scopeExamples||[]);
@@ -1156,7 +1184,7 @@ async function aiGrammar(node, getText, setText){
   const cur=getText();
   toast('Aa✓ Checking grammar & terminology…');
   try{
-    const sys='You are correcting a single item from an Ontario architect\'s General Review Report. Fix ONLY: grammar, spelling, punctuation, capitalization, and misheard or phonetically transcribed construction terminology from voice capture — e.g. "zed girts"/"zed gert" → "Z-girts", "dough house" → "doghouse", "weeping tile" homophones, product or consultant names. Use the exact terms from the project specifications where provided. When an item describes a product or system governed by a specification section in the provided excerpts, use the exact product/system name from that section in place of generic or colloquial terms (e.g. "fibre cement siding" or "cement panel cladding" becomes "mineral-fiber reinforced cementitious panels" where Section 07 44 56 governs). Do NOT change the item\'s meaning, scope, status, quantities, percentages or locations, and do NOT add or remove content. Output ONLY the corrected item text — if nothing needs correcting, output the item unchanged.'+STYLE_RULES+ROOM_RULE+specSuffix()+await docSuffix(cur);
+    const sys='You are correcting a single item from an Ontario architect\'s General Review Report. Fix ONLY: grammar, spelling, punctuation, capitalization, and misheard or phonetically transcribed construction terminology from voice capture — e.g. "zed girts"/"zed gert" → "Z-girts", "dough house" → "doghouse", "weeping tile" homophones, product or consultant names. Use the exact terms from the project specifications where provided. When an item describes a product or system governed by a specification section in the provided excerpts, use the exact product/system name from that section in place of generic or colloquial terms (e.g. "fibre cement siding" or "cement panel cladding" becomes "mineral-fiber reinforced cementitious panels" where Section 07 44 56 governs). Do NOT change the item\'s meaning, scope, status, quantities, percentages or locations, and do NOT add or remove content. CRITICAL: your entire output must be item text and nothing else — never commentary, notes, or explanations. If nothing needs correcting, output the item unchanged verbatim.'+STYLE_RULES+ROOM_RULE+await roomSuffix()+specSuffix()+await docSuffix(cur);
     const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
       headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
         'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
@@ -1179,7 +1207,7 @@ async function aiSpecOne(node, getText, setText){
   const cur=getText();
   toast('§✓ Checking this item against the contract documents…');
   try{
-    const sys='You are refining ONE General Review Report item against the project contract documents provided in the excerpts. Tasks: (1) replace generic or colloquial product terms with the exact product/system names used in the specifications; (2) verify every specification section citation in the item — if a cited section does not govern that scope, correct it to the section that does per the excerpts; (3) where a scope clearly matches a section in the excerpts and no citation exists, add it; (4) where the item names a room or area colloquially and the excerpts identify that room\'s proper name and number on the drawings, replace the colloquial name with the drawing\'s exact room name and number. If the excerpts do not clearly establish the governing section or the room identity, leave it as is rather than guess. Do NOT change the item\'s meaning, scope, status, quantities or locations. Output ONLY the corrected item text — unchanged if nothing needs correcting.'+STYLE_RULES+ROOM_RULE+specSuffix()+await docSuffix(cur);
+    const sys='You are refining ONE General Review Report item against the project contract documents provided in the excerpts. Tasks: (1) replace generic or colloquial product terms with the exact product/system names used in the specifications; (2) verify every specification section citation in the item — if a cited section does not govern that scope, correct it to the section that does per the excerpts; (3) where a scope clearly matches a section in the excerpts and no citation exists, add it; (4) where the item names a room or area colloquially and the excerpts identify that room\'s proper name and number on the drawings, replace the colloquial name with the drawing\'s exact room name and number. If the excerpts do not clearly establish the governing section or the room identity, leave it as is rather than guess. Do NOT change the item\'s meaning, scope, status, quantities or locations. CRITICAL: your entire output must be item text and nothing else — never commentary, notes, apologies, or explanations of what could not be verified. If nothing can be confidently corrected, output the original item text verbatim.'+STYLE_RULES+ROOM_RULE+await roomSuffix()+specSuffix()+await docSuffix(cur);
     const call=async(model,max)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
         headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
@@ -1249,6 +1277,12 @@ async function importDocs(files){
       } else { toast('Skipped '+f.name+' — PDF or TXT only'); continue; }
       text=text.replace(/[ \t]+/g,' ').trim();
       if(text.length<200){ toast(f.name+': no readable text (scanned drawings have none) — skipped'); continue; }
+      // harvest room names/numbers into the room directory
+      const rooms=harvestRooms(text);
+      if(rooms.length){
+        const ex=(S.settings.roomIndex||'').split('\n').filter(Boolean);
+        S.settings.roomIndex=[...new Set([...ex,...rooms])].slice(0,150).join('\n');
+      }
       const chunks=[]; const SZ=1400, OV=200;
       for(let i=0;i<text.length;i+=(SZ-OV)){
         const t=text.slice(i,i+SZ);
@@ -1319,7 +1353,7 @@ async function aiCompose(raw){
       headers:{'content-type':'application/json','x-api-key':key,
         'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body: JSON.stringify({model:'claude-haiku-4-5-20251001', max_tokens:400,
-        system: AI_SYS+STYLE_RULES+ROOM_RULE+scopeSuffix()+specSuffix()+await docSuffix(raw),
+        system: AI_SYS+STYLE_RULES+ROOM_RULE+await roomSuffix()+scopeSuffix()+specSuffix()+await docSuffix(raw),
         messages:[{role:'user',content:'Section: '+(WALKSEC==='progress'?'Progress of the Work':'Observations and Comments')+'\nSpoken notes:\n'+raw}]})
     });
     if(!resp.ok){
@@ -1660,7 +1694,7 @@ async function aiRecheck(){
 - add a specification section citation where the scope clearly matches (e.g. "as specified in Section 09 22 16");
 - if the described condition appears to deviate from the excerpts, append that it is to be reviewed against the cited section.
 Do NOT change an item's meaning, scope, status, or numbering, and do NOT add or remove items or invent content. Keep the concise past-tense observational voice; stay within the architect's lane (no means and methods, no conformance assertions).
-Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], "notes":["<short note on anything flagged>"]} — include ONLY items you actually changed.`+STYLE_RULES+ROOM_RULE+specSuffix()+docsSuf;
+Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], "notes":["<short note on anything flagged>"]} — include ONLY items you actually changed.`+STYLE_RULES+ROOM_RULE+await roomSuffix()+specSuffix()+docsSuf;
   try{
     const call=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
@@ -1725,7 +1759,7 @@ async function aiGrammarAll(){
   if(!items.length){ toast('No items yet'); return; }
   const h=$('#recheckHint'); if(h){ h.textContent='Aa✓ Grammar-checking '+items.length+' items…'; h.style.color=''; }
   const btn=$('#grammarAllBtn'); if(btn)btn.disabled=true;
-  const SYS='You are correcting items from an Ontario architect\'s General Review Report. For each item fix ONLY: grammar, spelling, punctuation, capitalization (including compass directions per the style rule), and misheard or phonetically transcribed construction terminology from voice capture (e.g. "zed girts" → "Z-girts", "dough house" → "doghouse"). Use exact terms from the project specifications where provided. When an item describes a product or system governed by a specification section in the provided excerpts, use the exact product/system name from that section in place of generic or colloquial terms (e.g. "fibre cement siding" or "cement panel cladding" becomes "mineral-fiber reinforced cementitious panels" where Section 07 44 56 governs). Do NOT change meaning, scope, status, quantities, percentages, locations or item numbers; do NOT add or remove content. Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<corrected text>"}]} — include ONLY items you actually changed.'+STYLE_RULES+ROOM_RULE+specSuffix()+await docSuffix(items.map(x=>x.text).join(' '));
+  const SYS='You are correcting items from an Ontario architect\'s General Review Report. For each item fix ONLY: grammar, spelling, punctuation, capitalization (including compass directions per the style rule), and misheard or phonetically transcribed construction terminology from voice capture (e.g. "zed girts" → "Z-girts", "dough house" → "doghouse"). Use exact terms from the project specifications where provided. When an item describes a product or system governed by a specification section in the provided excerpts, use the exact product/system name from that section in place of generic or colloquial terms (e.g. "fibre cement siding" or "cement panel cladding" becomes "mineral-fiber reinforced cementitious panels" where Section 07 44 56 governs). Do NOT change meaning, scope, status, quantities, percentages, locations or item numbers; do NOT add or remove content. Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<corrected text>"}]} — include ONLY items you actually changed.'+STYLE_RULES+ROOM_RULE+await roomSuffix()+specSuffix()+await docSuffix(items.map(x=>x.text).join(' '));
   try{
     const call=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
