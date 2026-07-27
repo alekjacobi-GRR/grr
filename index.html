@@ -842,6 +842,8 @@ function describeCmd(c){
   if(c.action==='resolve') return 'Mark '+c.num+' resolved';
   if(c.action==='reopen') return 'Reopen '+c.num;
   if(c.action==='delete') return 'Delete '+c.num;
+  if(c.action==='generate') return 'Generate the report documents';
+  if(c.action==='email') return 'Email the report to the distribution';
   return 'Not understood'+(c.why?': '+c.why:'');
 }
 async function runCommand(cmd){
@@ -850,7 +852,7 @@ async function runCommand(cmd){
   const ctx={progress:prog.map(x=>({num:x.num,text:x.text.slice(0,70)})),
              observations:obs.map(x=>({num:x.num,text:x.text.slice(0,70)})),
              previous_deficiencies:prev.map(x=>({num:x.num,text:x.text.slice(0,70)}))};
-  const SYS='You interpret a voice command for a construction report app and respond with ONLY a JSON object, no prose. Schemas: {"action":"move","num":"<item no>","to":"end"|"start"|"after"|"before","ref":"<item no>"} (reordering within the item\'s own section; ref only when to is after/before), {"action":"transfer","num":"<item no>","to":"progress"|"observations"|"super"} (moving an item to a different section; "super" = questions/discussion points for the site superintendent, which are NOT printed in the report), {"action":"resolve","num":"<previous item no>"}, {"action":"reopen","num":"<previous item no>"}, {"action":"delete","num":"<item no>"}, {"action":"unknown","why":"<short reason>"}. Current items: '+JSON.stringify(ctx);
+  const SYS='You interpret a voice command for a construction report app and respond with ONLY a JSON object, no prose. Schemas: {"action":"move","num":"<item no>","to":"end"|"start"|"after"|"before","ref":"<item no>"} (reordering within the item\'s own section; ref only when to is after/before), {"action":"transfer","num":"<item no>","to":"progress"|"observations"|"super"} (moving an item to a different section; "super" = questions/discussion points for the site superintendent, which are NOT printed in the report), {"action":"resolve","num":"<previous item no>"}, {"action":"reopen","num":"<previous item no>"}, {"action":"delete","num":"<item no>"}, {"action":"generate"} (generate/build the report documents — "generate the PDF", "build the report", "make the documents"), {"action":"email"} (email/send/distribute the generated report to the distribution list — "email it", "distribute it", "send the report"), {"action":"unknown","why":"<short reason>"}. Current items: '+JSON.stringify(ctx);
   try{
     const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
       headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
@@ -874,6 +876,37 @@ function findByNum(num){
   hit=obs.find(x=>x.num===num);
   if(hit) return {arr:S.report.obs, idx:S.report.obs.findIndex(i=>i.id===hit.id)};
   return null;
+}
+/* ---- voice replies & spoken confirmation ---- */
+function speak(msg){ try{ const u=new SpeechSynthesisUtterance(msg); u.lang='en-CA'; speechSynthesis.cancel(); speechSynthesis.speak(u); return u; }catch(e){ return null; } }
+function voiceConfirm(question, onYes){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const fallback=()=>{ if(confirm(question)) onYes(); };
+  if(!SR){ fallback(); return; }
+  let started=false;
+  const listen=()=>{
+    if(started) return; started=true;
+    const r=new SR(); r.lang='en-CA'; r.continuous=false; r.interimResults=false;
+    toast('🎙 '+question);
+    r.onresult=e=>{ const t=(e.results[0][0].transcript||'').toLowerCase();
+      if(/\b(yes|yeah|yep|sure|send|go ahead|do it|confirm|okay|ok)\b/.test(t)){ onYes(); }
+      else { speak('Cancelled.'); toast('✕ Cancelled — heard "'+t+'"'); } };
+    r.onerror=()=>{ toast('Mic issue — tap OK to confirm instead'); fallback(); };
+    try{ r.start(); }catch(e){ fallback(); }
+  };
+  const u=speak(question);
+  if(u){ u.onend=()=>setTimeout(listen,150); setTimeout(listen,4000); } else listen();
+}
+function emailReportDraft(){
+  const dist=S.settings.dist.filter(x=>(x.email||'').includes('@'));
+  if(!dist.length){ toast('No recipients — add the distribution in Setup'); return false; }
+  const to=dist.map(x=>x.email.trim()).join(',');
+  const subj=S.settings.project+' — General Review Report No. '+S.report.number;
+  const body='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.\n\nRegards,\n'+S.settings.firm;
+  try{ navigator.clipboard.writeText(to); }catch(e){}
+  location.href='mailto:'+to+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body);
+  toast('📧 Draft opened — attach the downloaded .pdf before sending');
+  return true;
 }
 function applyCommand(c){
   if(c.action==='move'){
@@ -901,6 +934,19 @@ function applyCommand(c){
   } else if(c.action==='delete'){
     const f=findByNum(c.num); if(!f){ toast('Item '+c.num+' not found'); return; }
     if(confirm('Delete item '+c.num+'?')){ f.arr.splice(f.idx,1); save(); render(); toast('Deleted'); }
+  } else if(c.action==='generate'){
+    if(!S.report.dates.filter(Boolean).length){ speak('Set the visit dates first.'); toast('Set the visit date(s) on the Report tab first'); TAB='report'; render(); return; }
+    TAB='report'; render();
+    speak('Generating Report '+S.report.number+'.');
+    generateAll().then(()=>{ if(window._pdf) speak('Report '+S.report.number+' is generated. Review it, then say: email it.'); });
+  } else if(c.action==='email'){
+    const n=S.settings.dist.filter(x=>(x.email||'').includes('@')).length;
+    if(!n){ speak('No recipients set.'); toast('No recipients — add the distribution in Setup'); return; }
+    const doIt=()=>{
+      if(window._pdf){ speak('Opening the email draft.'); emailReportDraft(); }
+      else { TAB='report'; render(); speak('Generating first.'); generateAll().then(()=>{ if(window._pdf) emailReportDraft(); }); }
+    };
+    voiceConfirm('Email Report '+S.report.number+' to '+n+' recipients. Yes or no?', doIt);
   } else toast('Did not understand'+(c.why?': '+c.why:' — try again'));
 }
 let recMode='verbatim', lastRaw=null;
@@ -2148,16 +2194,7 @@ async function generateAll(){
     $('#sharePdf').onclick=()=>shareOrDl(window._pdf);
     $('#dlDocx').onclick=()=>dl(window._docx);
     $('#dlPdf').onclick=()=>dl(window._pdf);
-    $('#emailBtn').onclick=()=>{
-      const dist=S.settings.dist.filter(x=>(x.email||'').includes('@'));
-      if(!dist.length){ toast('No recipients — add the distribution in Setup'); return; }
-      const to=dist.map(x=>x.email.trim()).join(',');
-      const subj=S.settings.project+' — General Review Report No. '+S.report.number;
-      const body='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.\n\nRegards,\n'+S.settings.firm;
-      try{ navigator.clipboard.writeText(to); }catch(e){}
-      location.href='mailto:'+to+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body);
-      toast('📧 Draft opened — attach '+fnBase+'.pdf before sending');
-    };
+    $('#emailBtn').onclick=()=>emailReportDraft();
     toast('Report '+S.report.number+' generated ✓');
   }catch(e){ console.error(e); out.innerHTML='<div class="empty">⚠️ '+esc(e.message)+'</div>'; }
 }
