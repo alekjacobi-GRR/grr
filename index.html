@@ -87,6 +87,7 @@ textarea{min-height:110px;line-height:1.45;resize:vertical}
 .dist-row{display:flex;gap:6px;margin-bottom:6px;align-items:center}
 .dist-row input{font-size:13px;padding:8px 9px}
 .dist-row button{background:none;border:none;color:var(--red);font-size:17px;width:30px}
+.dist-row .mvDist{color:var(--teal);font-size:15px;width:26px}
 .date-row{display:flex;gap:6px;margin-bottom:6px;align-items:center}
 .date-row button{background:none;border:none;color:var(--red);font-size:17px;width:30px}
 .preview{background:#fff;color:#111;border-radius:12px;padding:18px 16px;font-family:'Helvetica Neue',Arial,sans-serif;
@@ -2218,6 +2219,7 @@ function renderSettings(m){
     <div class="dist-row">
       <input type="text" value="${esc(d.name)}" data-i="${i}" data-k="name" placeholder="Name – Company">
       <input type="text" value="${esc(d.email)}" data-i="${i}" data-k="email" placeholder="email">
+      <button data-i="${i}" class="mvDist" title="Move to position…">↕</button>
       <button data-i="${i}" class="delDist">✕</button>
     </div>`).join('');
   const impUI = IMP ? `
@@ -2351,6 +2353,18 @@ function renderSettings(m){
   m.querySelectorAll('.dist-row input').forEach(inp=>inp.onchange=e=>{
     st.dist[+e.target.dataset.i][e.target.dataset.k]=e.target.value; save(); });
   m.querySelectorAll('.delDist').forEach(b=>b.onclick=()=>{ st.dist.splice(+b.dataset.i,1); save(); render(); });
+  m.querySelectorAll('.mvDist').forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.i, d=st.dist[i];
+    const raw=prompt('Move "'+(d.name||d.email||'recipient')+'" to which position? (1–'+st.dist.length+')', String(i+1));
+    if(raw===null) return;
+    let pos=parseInt(raw,10);
+    if(isNaN(pos)){ toast('Enter a number 1–'+st.dist.length); return; }
+    pos=Math.max(1,Math.min(st.dist.length,pos))-1;
+    if(pos===i) return;
+    st.dist.splice(i,1); st.dist.splice(pos,0,d);
+    const y=window.scrollY; save(); render(); window.scrollTo(0,y);
+    toast('Moved to position '+(pos+1));
+  });
   $('#addDist').onclick=()=>{ st.dist.push({name:'',email:''}); save(); render(); };
   $('#sigUp').onclick=()=>{ $('#fileSig').onchange=async e=>{
       const f=e.target.files[0]; if(!f)return;
