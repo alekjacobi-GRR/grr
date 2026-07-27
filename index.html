@@ -904,8 +904,18 @@ function emailReportDraft(){
   const subj=S.settings.project+' — General Review Report No. '+S.report.number;
   const body='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.\n\nRegards,\n'+S.settings.firm;
   try{ navigator.clipboard.writeText(to); }catch(e){}
-  location.href='mailto:'+to+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body);
-  toast('📧 Draft opened — attach the downloaded .pdf before sending');
+  let via=S.settings.emailVia;
+  if(via!=='gmail' && via!=='mailto'){
+    via = confirm('Open email drafts in Gmail?\n\nOK — Gmail (opens gmail.com; sign into your Google account once and it remembers you)\nCancel — this device\'s mail app') ? 'gmail' : 'mailto';
+    S.settings.emailVia=via; save();
+  }
+  if(via==='gmail'){
+    window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to)+'&su='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body),'_blank');
+    toast('📧 Gmail draft opened — attach the downloaded .pdf before sending');
+  } else {
+    location.href='mailto:'+to+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body);
+    toast('📧 Draft opened — attach the downloaded .pdf before sending');
+  }
   return true;
 }
 function applyCommand(c){
@@ -2507,6 +2517,12 @@ function renderSettings(m){
     <h2>Distribution</h2>
     ${distRows}
     <button class="btn sec small" id="addDist">+ Add recipient</button>
+    <label class="f">📧 Email drafts open in</label>
+    <select id="emailVia" style="width:100%;padding:9px;border-radius:8px">
+      <option value="" ${!st.emailVia?'selected':''}>Ask me next time</option>
+      <option value="gmail" ${st.emailVia==='gmail'?'selected':''}>Gmail (browser — your Google account)</option>
+      <option value="mailto" ${st.emailVia==='mailto'?'selected':''}>This device's mail app</option>
+    </select>
   </div>
   <div class="card">
     <h2>Danger zone</h2>
@@ -2580,6 +2596,7 @@ function renderSettings(m){
     toast('Moved to position '+(pos+1));
   });
   $('#addDist').onclick=()=>{ st.dist.push({name:'',email:''}); save(); render(); };
+  $('#emailVia').onchange=e=>{ st.emailVia=e.target.value; save(); toast(e.target.value?'📧 Saved':'📧 Will ask next time'); };
   $('#sigUp').onclick=()=>{ $('#fileSig').onchange=async e=>{
       const f=e.target.files[0]; if(!f)return;
       const bmp=await createImageBitmap(f,{imageOrientation:'from-image'}).catch(()=>createImageBitmap(f));
