@@ -2131,7 +2131,8 @@ async function generateAll(){
         <button class="btn sec" id="dlDocx">⬇ Download .docx</button>
         <button class="btn sec" id="dlPdf">⬇ Download .pdf</button>
       </div>
-      <p class="note">Share opens the share sheet (AirDrop, Mail, on iPhone also Save to Files). Download saves straight to this device's Downloads.</p>`;
+      <button class="btn" id="emailBtn" style="margin-top:8px">📧 Email report — draft to distribution</button>
+      <p class="note">Share opens the share sheet (AirDrop, Mail, on iPhone also Save to Files). Download saves straight to this device's Downloads. 📧 opens a pre-addressed draft in your mail app — attach the downloaded .pdf before sending (email drafts opened from a web app can't carry the attachment themselves; the recipient list is also copied to your clipboard).</p>`;
     const shareOrDl=async(file)=>{
       if(navigator.canShare && navigator.canShare({files:[file]})){
         try{ await navigator.share({files:[file], title:file.name}); return; }catch(e){ if(e.name==='AbortError')return; }
@@ -2147,6 +2148,16 @@ async function generateAll(){
     $('#sharePdf').onclick=()=>shareOrDl(window._pdf);
     $('#dlDocx').onclick=()=>dl(window._docx);
     $('#dlPdf').onclick=()=>dl(window._pdf);
+    $('#emailBtn').onclick=()=>{
+      const dist=S.settings.dist.filter(x=>(x.email||'').includes('@'));
+      if(!dist.length){ toast('No recipients — add the distribution in Setup'); return; }
+      const to=dist.map(x=>x.email.trim()).join(',');
+      const subj=S.settings.project+' — General Review Report No. '+S.report.number;
+      const body='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.\n\nRegards,\n'+S.settings.firm;
+      try{ navigator.clipboard.writeText(to); }catch(e){}
+      location.href='mailto:'+to+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body);
+      toast('📧 Draft opened — attach '+fnBase+'.pdf before sending');
+    };
     toast('Report '+S.report.number+' generated ✓');
   }catch(e){ console.error(e); out.innerHTML='<div class="empty">⚠️ '+esc(e.message)+'</div>'; }
 }
