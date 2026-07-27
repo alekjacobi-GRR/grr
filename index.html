@@ -1727,15 +1727,26 @@ async function generateAll(){
         <button class="btn" id="shareDocx">Share .docx</button>
         <button class="btn" id="sharePdf">Share .pdf</button>
       </div>
-      <p class="note">On iPhone this opens the share sheet — save to Files, or Mail it to the distribution list.</p>`;
+      <div class="row" style="margin-top:8px">
+        <button class="btn sec" id="dlDocx">⬇ Download .docx</button>
+        <button class="btn sec" id="dlPdf">⬇ Download .pdf</button>
+      </div>
+      <p class="note">Share opens the share sheet (AirDrop, Mail, on iPhone also Save to Files). Download saves straight to this device's Downloads.</p>`;
     const shareOrDl=async(file)=>{
       if(navigator.canShare && navigator.canShare({files:[file]})){
         try{ await navigator.share({files:[file], title:file.name}); return; }catch(e){ if(e.name==='AbortError')return; }
       }
-      const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=file.name; a.click();
+      dl(file);
+    };
+    const dl=(file)=>{
+      const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=file.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      toast('⬇ '+file.name+' saved to Downloads');
     };
     $('#shareDocx').onclick=()=>shareOrDl(window._docx);
     $('#sharePdf').onclick=()=>shareOrDl(window._pdf);
+    $('#dlDocx').onclick=()=>dl(window._docx);
+    $('#dlPdf').onclick=()=>dl(window._pdf);
     toast('Report '+S.report.number+' generated ✓');
   }catch(e){ console.error(e); out.innerHTML='<div class="empty">⚠️ '+esc(e.message)+'</div>'; }
 }
