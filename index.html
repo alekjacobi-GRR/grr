@@ -902,8 +902,10 @@ function emailReportDraft(){
   if(!dist.length){ toast('No recipients — add the distribution in Setup'); return false; }
   const to=dist.map(x=>x.email.trim()).join(',');
   const subj=S.settings.project+' — General Review Report No. '+S.report.number;
-  const body='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.\n\nRegards,\n'+S.settings.firm;
+  const sig=(S.settings.emailSig||'').trim() || ('Regards,\n'+S.settings.firm);
+  const body='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.\n\n'+sig;
   try{ navigator.clipboard.writeText(to); }catch(e){}
+  if(window._pdf){ try{ const a=document.createElement('a'); a.href=URL.createObjectURL(window._pdf); a.download=window._pdf.name; document.body.appendChild(a); a.click(); a.remove(); }catch(e){} }
   let via=S.settings.emailVia;
   if(via!=='gmail' && via!=='mailto'){
     via = confirm('Open email drafts in Gmail?\n\nOK — Gmail (opens gmail.com; sign into your Google account once and it remembers you)\nCancel — this device\'s mail app') ? 'gmail' : 'mailto';
@@ -911,10 +913,10 @@ function emailReportDraft(){
   }
   if(via==='gmail'){
     window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to)+'&su='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body),'_blank');
-    toast('📧 Gmail draft opened — attach the downloaded .pdf before sending');
+    toast('📧 Gmail draft opened — the .pdf just landed in Downloads; drag it into the draft');
   } else {
     location.href='mailto:'+to+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body);
-    toast('📧 Draft opened — attach the downloaded .pdf before sending');
+    toast('📧 Draft opened — the .pdf just landed in Downloads; attach it before sending');
   }
   return true;
 }
@@ -2523,6 +2525,8 @@ function renderSettings(m){
       <option value="gmail" ${st.emailVia==='gmail'?'selected':''}>Gmail (browser — your Google account)</option>
       <option value="mailto" ${st.emailVia==='mailto'?'selected':''}>This device's mail app</option>
     </select>
+    <label class="f">📧 Email signature (plain text — appended to every report email)</label>
+    <textarea id="emailSig" style="min-height:84px" placeholder="Regards,&#10;&#10;Alex Jacobi, OAA&#10;Snyder Architects Inc.&#10;416-...">${esc(st.emailSig||'')}</textarea>
   </div>
   <div class="card">
     <h2>Danger zone</h2>
@@ -2597,6 +2601,7 @@ function renderSettings(m){
   });
   $('#addDist').onclick=()=>{ st.dist.push({name:'',email:''}); save(); render(); };
   $('#emailVia').onchange=e=>{ st.emailVia=e.target.value; save(); toast(e.target.value?'📧 Saved':'📧 Will ask next time'); };
+  $('#emailSig').onchange=e=>{ st.emailSig=e.target.value; save(); toast('📧 Signature saved'); };
   $('#sigUp').onclick=()=>{ $('#fileSig').onchange=async e=>{
       const f=e.target.files[0]; if(!f)return;
       const bmp=await createImageBitmap(f,{imageOrientation:'from-image'}).catch(()=>createImageBitmap(f));
