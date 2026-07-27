@@ -1,4 +1,4 @@
-const C='grr-v12';
+const C='grr-v13';
 const A=['./','./index.html','./jszip.min.js','./pdf-lib.min.js','./pdf.min.js','./pdf.worker.min.js','./fontkit.umd.min.js','./LiberationSansNarrow-Regular.ttf','./LiberationSansNarrow-Bold.ttf','./LiberationSans-Regular.ttf','./LiberationSans-Bold.ttf','./icon.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(A)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});

@@ -1041,26 +1041,30 @@ const ROOM_RULE='\nRooms and areas: where the provided contract-document excerpt
 function harvestRooms(text){
   const out={};
   const bad=/^(SCALE|DATE|SHEET|DWG|DRAWING|DETAIL|SECTION|NOTE|NOTES|TYP|REV|NO|PROJECT|NORTH|SOUTH|EAST|WEST|PLAN|LEVEL|FLOOR|GRID|ROOM|AREA|EXISTING|NEW|PART|PHASE|TYPE|ZONE|MARK|ISSUED|CONTRACT|GENERAL|LEGEND|KEY)$/;
-  const re=/\b([A-Z][A-Z&/'\-\.]{1,}(?: [A-Z][A-Z&/'\-\.]{1,}){0,3})[ :\-]+(\d{1,4}[A-Z]?)\b/g;
+  const badAny=/(LEGEND|SCHEDULE|REFER|NOTE|DWG|SIM\b|^EA |^AAMA|^ANSI|^ASTM|^CSA|^ULC|^NFPA|^NFRC|^CAN\b|^AFF\b|^GB\b|^RM\/|^FLR\b|^MIN\b|^MAX\b|^LINE\b|^U\/G\b|^MIR\b)/;
+  const ROOMY=/(ROOM|OFFICE|STOR|CORRIDOR|LOBBY|VESTIBULE|WASHROOM|JAN|MECH|ELEC|KITCHEN|CLASS|GYM|STAIR|ELEVATOR|LAB|SHOP|CUST|RECEP|LIBRARY|CAFETERIA|CHANGE|SERVER|NEUTRALIZER|UTILITY|BOILER|SPRINKLER|GARBAGE|REFUSE|SUITE|CHAPEL|MULTIFUNCTION|GUIDANCE|ADMIN|STAFF|PREP|SCIENCE|ART\b|MUSIC|DRAMA|TECH|RESOURCE|SEMINAR|WELDING|TRANSPORT|COSMETOLOGY|HAIRSTYLING|CONSTRUCTION)/;
+  const re=/\b([A-Z][A-Z&\/'\-\.]{1,}(?: [A-Z][A-Z&\/'\-\.]{1,}){0,3})[ :\-]+(\d{1,4}[A-Z]?)\b/g;
   let m;
   while((m=re.exec(text))){
     const name=m[1].trim(), num=m[2];
-    if(name.length<4 || /^\d/.test(name) || bad.test(name)) continue;
+    if(name.length<4 || /^\d/.test(name) || bad.test(name) || badAny.test(name)) continue;
     if(/^(19|20)\d\d$/.test(num)) continue;
     const hasSuffix=/[A-Z]$/.test(num);
-    const roomy=/(ROOM|OFFICE|STOR|CORRIDOR|LOBBY|VESTIBULE|WASHROOM|JAN|MECH|ELEC|KITCHEN|CLASS|GYM|STAIR|ELEVATOR|LAB|SHOP|CUST|RECEP|LIBRARY|CAFETERIA|CHANGE|SERVER|NEUTRALIZER|UTILITY|BOILER|SPRINKLER|GARBAGE|REFUSE|SUITE|UNIT)/.test(name);
+    const roomy=ROOMY.test(name);
     if(!hasSuffix && !roomy && num.length<3) continue;
     const key=name+' '+num;
-    out[key]=(out[key]||0)+1;
+    if(!out[key]) out[key]={c:0, score:(hasSuffix?2:0)+(roomy?3:0)};
+    out[key].c++;
   }
-  return Object.entries(out).sort((a,b)=>b[1]-a[1]).map(([k])=>k);
+  // rooms first (letter-suffix numbers, room-like names), spec-standard noise last
+  return Object.entries(out).sort((a,b)=>(b[1].score-a[1].score)||(b[1].c-a[1].c)).map(([k])=>k);
 }
 async function roomSuffix(){
-  if(S.settings.roomIndex===undefined){
-    // one-time build from documents already imported before this feature existed
+  if(S.settings.roomIndexV!==2){
+    // (re)build from imported documents — v2 scoring ranks real rooms above spec-standard noise
     let all='';
     try{ (await docsAll()).forEach(d=>d.chunks.forEach(c=>{ all+=c.t+'\n'; })); }catch(e){}
-    S.settings.roomIndex=harvestRooms(all).slice(0,150).join('\n'); save();
+    S.settings.roomIndex=harvestRooms(all).slice(0,250).join('\n'); S.settings.roomIndexV=2; save();
   }
   const r=(S.settings.roomIndex||'').trim();
   return r? '\n\nRoom/area directory extracted from the project drawings — when an item refers to one of these rooms or areas, identify it by this exact name and number. The list may contain some non-room noise from drawing text; apply judgment and never invent a room that is not clearly the one meant:\n'+r.slice(0,4000) : '';
@@ -1281,7 +1285,7 @@ async function importDocs(files){
       const rooms=harvestRooms(text);
       if(rooms.length){
         const ex=(S.settings.roomIndex||'').split('\n').filter(Boolean);
-        S.settings.roomIndex=[...new Set([...ex,...rooms])].slice(0,150).join('\n');
+        S.settings.roomIndex=[...new Set([...ex,...rooms])].slice(0,250).join('\n');
       }
       const chunks=[]; const SZ=1400, OV=200;
       for(let i=0;i<text.length;i+=(SZ-OV)){
