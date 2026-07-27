@@ -1574,6 +1574,7 @@ function renderReport(m){
     <button class="btn sec" id="dupBtn" style="margin-top:8px">⧉ Clean up — duplicates &amp; out-of-scope items</button>
     ${(()=>{try{const u=JSON.parse(localStorage.getItem('grr-undo')||'null');return u?'<button class="btn sec" id="undoAiBtn" style="margin-top:8px;border-color:var(--amber);color:var(--amber)">↩︎ Undo last AI pass ('+esc(u.label)+')</button>':''}catch(e){return ''}})()}
     <p class="hint" id="recheckHint"></p>
+    <div id="recheckOut"></div>
     <div id="dupOut"></div>
     <div class="gate">
       <b>Is this ready to go to print?</b>
@@ -1606,6 +1607,7 @@ function renderReport(m){
   $('#closeOut').onclick=closeOut;
   drawPreview();
   drawDupGroups();
+  drawRecheck();
 }
 async function drawPreview(){
   const el=$('#prevDoc'); if(!el)return;
@@ -1677,19 +1679,20 @@ Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], 
     if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
     if(!m) throw new Error('no result (stop: '+(data.stop_reason||'?')+')');
     const out=JSON.parse(m[0]);
-    if((out.items||[]).length) snapshotUndo('spec re-check');
-    let changed=0;
+    const norm=s=>s.replace(/\s+/g,' ').trim();
+    RECHECK=[];
     (out.items||[]).forEach(rev=>{
       if(!rev.num||!rev.text) return;
       const hit=[...prog,...obs].find(x=>x.num===rev.num); if(!hit) return;
-      const arr=prog.includes(hit)?S.report.progress:S.report.obs;
-      const it=arr.find(i=>i.id===hit.id);
-      if(it && it.text!==rev.text.trim()){ it.prevText=it.text; it.text=rev.text.trim(); changed++; }
+      if(norm(hit.text)===norm(rev.text)) return;
+      RECHECK.push({id:hit.id, text:rev.text.trim()});
     });
-    save(); render();
     const h2=$('#recheckHint');
-    if(h2) h2.textContent = changed? ('✔️ '+changed+' item(s) updated against the documents'+((out.notes||[]).length?' — '+(out.notes||[]).join(' · ').slice(0,200):'')) : '✔️ Checked — no changes needed';
-    toast(changed? changed+' item(s) refined — review the wording' : 'Checked — items already consistent');
+    if(h2) h2.textContent = RECHECK.length
+      ? ('✔️ '+RECHECK.length+' proposed change(s)'+((out.notes||[]).length?' — '+(out.notes||[]).join(' · ').slice(0,200):'')+' — review below; nothing changes until you approve')
+      : '✔️ Checked — no changes proposed';
+    toast(RECHECK.length? RECHECK.length+' proposed rewording(s) — review & approve below' : 'Checked — items already consistent');
+    drawRecheck();
   }catch(e){
     const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Check failed: '+e.message; h2.style.color='var(--red)'; }
   }
@@ -1805,6 +1808,46 @@ async function aiLaneCheck(){
     const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Lane check failed: '+e.message; h2.style.color='var(--red)'; }
   }
   const btn2=$('#laneBtn'); if(btn2)btn2.disabled=false;
+}
+
+/* ---- review-first proposals from the all-items spec/drawing re-check ---- */
+let RECHECK=[];
+function drawRecheck(){
+  const el=$('#recheckOut'); if(!el) return;
+  el.innerHTML='';
+  RECHECK=RECHECK.filter(r=>itemById(r.id));
+  if(!RECHECK.length) return;
+  const {prog,obs}=numbered();
+  const numOf=id=>{ const hit=[...prog,...obs].find(x=>x.id===id); return hit?hit.num:'?'; };
+  if(RECHECK.length>1)
+    el.insertAdjacentHTML('beforeend','<button class="btn small" id="specApplyAll" style="margin-top:10px">✔️ Apply all '+RECHECK.length+' proposed changes</button>');
+  RECHECK.forEach((r,ri)=>{
+    const f=itemById(r.id); const cur=f.arr[f.idx].text;
+    el.insertAdjacentHTML('beforeend',
+      `<div style="border:1px solid var(--teal);border-radius:10px;padding:10px;margin-top:10px">
+        <b>✔️ ${numOf(r.id)}</b> <span class="hint">— proposed wording per specs &amp; drawings</span>
+        <div style="margin:6px 0"><span class="hint">Now: ${esc(cur)}</span></div>
+        <label class="f">Proposed (edit before applying if needed)</label>
+        <textarea class="rcTxt" data-r="${ri}" style="min-height:84px">${esc(r.text)}</textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small" data-r="${ri}" data-op="rcApply">✔ Apply</button>
+          <button class="btn small sec" data-r="${ri}" data-op="rcDismiss">Keep as is</button>
+        </div>
+      </div>`);
+  });
+  const applyOne=(ri)=>{
+    const r=RECHECK[ri]; if(!r) return;
+    const f=itemById(r.id); if(!f) return;
+    const ta=el.querySelector('.rcTxt[data-r="'+ri+'"]');
+    const v=(ta&&ta.value.trim())||r.text;
+    const it=f.arr[f.idx]; it.prevText=it.text; it.text=v;
+  };
+  el.querySelectorAll('button[data-op]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.op==='rcApply'){ snapshotUndo('spec re-check'); applyOne(+b.dataset.r); RECHECK.splice(+b.dataset.r,1); save(); render(); toast('✔️ Applied — ↩︎ Undo available'); }
+    else if(b.dataset.op==='rcDismiss'){ RECHECK.splice(+b.dataset.r,1); drawRecheck(); }
+  });
+  const aa=el.querySelector('#specApplyAll');
+  if(aa) aa.onclick=()=>{ snapshotUndo('spec re-check'); for(let i=0;i<RECHECK.length;i++) applyOne(i); RECHECK=[]; save(); render(); toast('✔️ All proposed changes applied — ↩︎ Undo available'); };
 }
 
 /* ---- clean-up pass: duplicates & out-of-scope items (review-first, nothing auto-applies) ---- */
