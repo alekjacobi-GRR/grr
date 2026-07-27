@@ -642,6 +642,7 @@ async function drawWalkList(){
         <button class="btn small sec mv">⇄ Move</button>
         <button class="btn small sec gr">Aa✓</button>
         <button class="btn small sec ln">🛡</button>
+        <button class="btn small sec sp">§✓</button>
         ${it.prevText&&it.prevText!==it.text?'<button class="btn small sec un">↩︎</button>':''}
         <button class="btn small sec ph">📷 Photo</button>
         <button class="btn small warn dl">🗑</button>
@@ -656,6 +657,7 @@ async function drawWalkList(){
     node.querySelector('.ed').onclick=()=>startInlineEdit(node, ()=>it.text, setT);
     node.querySelector('.gr').onclick=()=>aiGrammar(node, ()=>it.text, setT);
     node.querySelector('.ln').onclick=()=>aiLaneOne(node, ()=>it.text, setT);
+    node.querySelector('.sp').onclick=()=>aiSpecOne(node, ()=>it.text, setT);
     const un=node.querySelector('.un');
     if(un) un.onclick=()=>{ const t=it.text; it.text=it.prevText; it.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); };
     node.querySelector('.mv').onclick=()=>{
@@ -1050,6 +1052,34 @@ async function aiGrammar(node, getText, setText){
   }catch(e){ toast('Grammar check failed: '+e.message); }
 }
 
+/* ---- per-item spec re-check (§✓): terminology + correct section citation ---- */
+async function aiSpecOne(node, getText, setText){
+  if(!S.settings.aiKey){ toast('Spec check needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  const cur=getText();
+  toast('§✓ Checking this item against the contract documents…');
+  try{
+    const sys='You are refining ONE General Review Report item against the project contract documents provided in the excerpts. Tasks: (1) replace generic or colloquial product terms with the exact product/system names used in the specifications; (2) verify every specification section citation in the item — if a cited section does not govern that scope, correct it to the section that does per the excerpts; (3) where a scope clearly matches a section in the excerpts and no citation exists, add it. If the excerpts do not clearly establish the governing section for a scope, leave that citation out rather than guess. Do NOT change the item\'s meaning, scope, status, quantities or locations. Output ONLY the corrected item text — unchanged if nothing needs correcting.'+STYLE_RULES+specSuffix()+await docSuffix(cur);
+    const call=async(model,max)=>{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model,max_tokens:max,system:sys,messages:[{role:'user',content:cur}]})});
+      const data=await resp.json().catch(()=>({}));
+      return {resp,data};
+    };
+    let {resp,data}=await call('claude-sonnet-5',8000);
+    let text=resp.ok?(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim():'';
+    if(!text){ ({resp,data}=await call('claude-haiku-4-5-20251001',500));
+      if(resp.ok) text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim(); }
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
+    if(!text) throw new Error('empty response');
+    if(text===cur){ toast('§✓ Consistent with the documents — no change'); return; }
+    startInlineEdit(node, ()=>text, setText);
+    const h=node.querySelector('.ie-hint');
+    if(h) h.textContent='§✓ Spec-checked rewording proposed — review the citation, then Save or ✕';
+  }catch(e){ toast('Spec check failed: '+e.message); }
+}
+
 /* ---- per-item OAA lane check ---- */
 async function aiLaneOne(node, getText, setText){
   if(!S.settings.aiKey){ toast('Lane check needs your API key — add it in Setup'); TAB='settings'; render(); return; }
@@ -1309,6 +1339,7 @@ function renderPrev(m){
         <button class="btn small sec" data-i="${i}" data-op="ed">✎ Update</button>
         <button class="btn small sec" data-i="${i}" data-op="gr">Aa✓</button>
         <button class="btn small sec" data-i="${i}" data-op="ln">🛡</button>
+        <button class="btn small sec" data-i="${i}" data-op="sp">§✓</button>
         ${p.prevText&&p.prevText!==p.text?`<button class="btn small sec" data-i="${i}" data-op="un">↩︎</button>`:''}
       </div>
     </div>`);
@@ -1319,6 +1350,7 @@ function renderPrev(m){
     if(b.dataset.op==='res'){ p.resolved=!p.resolved; save(); render(); }
     else if(b.dataset.op==='gr') aiGrammar(b.closest('.item'), ()=>p.text, setP);
     else if(b.dataset.op==='ln') aiLaneOne(b.closest('.item'), ()=>p.text, setP);
+    else if(b.dataset.op==='sp') aiSpecOne(b.closest('.item'), ()=>p.text, setP);
     else if(b.dataset.op==='un'){ const t=p.text; p.text=p.prevText; p.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); }
     else startInlineEdit(b.closest('.item'), ()=>p.text, setP);
   });
