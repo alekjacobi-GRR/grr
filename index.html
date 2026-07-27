@@ -388,7 +388,16 @@ function load(pid){
   return s;
 }
 let saveTimer=null;
-function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow,250); }
+/* the standing consultant-referral item is always LAST in Progress of the Work */
+function ensureBoilerLast(){
+  try{
+    const arr=S.report.progress;
+    const isB=it=>it.boiler || (/consultant general review report/i.test(it.text) && /(mechanical|electrical|structural|civil)/i.test(it.text));
+    const idx=arr.findIndex(isB);
+    if(idx>=0){ arr[idx].boiler=true; if(idx!==arr.length-1){ const [b]=arr.splice(idx,1); arr.push(b); } }
+  }catch(e){}
+}
+function save(){ ensureBoilerLast(); clearTimeout(saveTimer); saveTimer=setTimeout(saveNow,250); }
 function saveNow(){
   clearTimeout(saveTimer);
   try{ localStorage.setItem(stateKey(S._pid||projMeta().current), JSON.stringify(S)); }
