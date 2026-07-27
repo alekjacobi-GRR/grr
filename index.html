@@ -1141,7 +1141,7 @@ async function aiLaneOne(node, getText, setText){
   const cur=getText();
   toast('🛡 Lane-checking this item…');
   try{
-    const sys='You are checking ONE General Review Report item for an Ontario architect against OAA general-review scope and Pro-Demnity risk wording. Out-of-lane signals: directing construction means, methods, techniques, sequences or procedures; directing or commenting on site safety; language implying supervision, inspection, approval or certification ("inspected", "approved", "verified", "ensure", "guarantee"); asserting conformance or non-conformance as fact; technical comment on another consultant\'s scope beyond neutral progress narration or a referral; admissions of design error. If out of lane, reword it: past-tense observation, outcome-based follow-up assigned to the responsible party, referrals for other consultants\' scopes. PRESERVE all observed facts, locations and quantities. If the item is already within the lane, output it EXACTLY unchanged. Output ONLY the item text.'+STYLE_RULES+specSuffix();
+    const sys='You are checking ONE General Review Report item for an Ontario architect against OAA general-review scope and Pro-Demnity risk wording. Out-of-lane signals: directing construction means, methods, techniques, sequences or procedures; directing or commenting on site safety; language implying supervision, inspection, approval or certification ("inspected", "approved", "verified", "ensure", "guarantee"); asserting conformance or non-conformance as fact; technical comment on another consultant\'s scope beyond neutral progress narration; any item narrating another consultant\'s scope (structural, mechanical, electrical, civil, etc.) that lacks a closing referral to that consultant\'s review; admissions of design error. If out of lane, reword it: past-tense observation, outcome-based follow-up assigned to the responsible party. An item touching another consultant\'s scope keeps its progress narration but must END with a referral sentence naming that consultant, e.g. "Refer to structural consultant\'s general review report." — do not duplicate a referral already present. PRESERVE all observed facts, locations and quantities. If the item is already within the lane (including any needed referral), output it EXACTLY unchanged, character for character. Output ONLY the item text.'+STYLE_RULES+specSuffix();
     const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
       headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
         'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
@@ -1151,7 +1151,8 @@ async function aiLaneOne(node, getText, setText){
     if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
     const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
     if(!text) throw new Error('empty response');
-    if(text===cur){ toast('🛡 In lane — no change needed'); return; }
+    const norm=s=>s.replace(/\s+/g,' ').trim();
+    if(norm(text)===norm(cur)){ toast('🛡 In lane — no change needed'); return; }
     startInlineEdit(node, ()=>text, setText);
     const h=node.querySelector('.ie-hint');
     if(h) h.textContent='🛡 Lane rewording proposed — review and Save, or ✕ to keep your original';
@@ -1692,7 +1693,7 @@ async function aiLaneCheck(){
   if(!items.length){ toast('No items yet'); return; }
   const h=$('#recheckHint'); if(h){ h.textContent='🛡 Lane-checking '+items.length+' items…'; h.style.color=''; }
   const btn=$('#laneBtn'); if(btn)btn.disabled=true;
-  const SYS='You are reviewing General Review Report items for an Ontario architect against OAA general-review scope and Pro-Demnity risk-management wording. Flag and reword ONLY items that stray out of the architect\'s lane. Out-of-lane signals: directing construction means, methods, techniques, sequences or procedures; directing or commenting on site safety; language implying supervision, inspection, approval or certification of the work ("inspected", "supervised", "approved", "verified", "ensure", "guarantee", "confirm that"); asserting conformance or non-conformance as fact rather than observation; technical comment on another consultant\'s scope (mechanical, electrical, structural, civil, etc.) beyond neutral progress narration or a referral to that consultant; admissions of design error or accepting responsibility; absolute or exhaustive language implying comprehensive review. Reword flagged items to: past-tense observation ("observed", "noted"), outcome-based follow-up assigned to the responsible party ("Contractor to correct and advise", "to be reviewed"), referrals for other consultants\' scopes, and general-review qualifiers where needed. PRESERVE all observed facts, locations, quantities and item numbers. Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<reworded text>","why":"<3-6 word reason>"}]} — include ONLY items that need rewording; if none, return {"items":[]}.'+STYLE_RULES+specSuffix();
+  const SYS='You are reviewing General Review Report items for an Ontario architect against OAA general-review scope and Pro-Demnity risk-management wording. Flag and reword ONLY items that stray out of the architect\'s lane. Out-of-lane signals: directing construction means, methods, techniques, sequences or procedures; directing or commenting on site safety; language implying supervision, inspection, approval or certification of the work ("inspected", "supervised", "approved", "verified", "ensure", "guarantee", "confirm that"); asserting conformance or non-conformance as fact rather than observation; technical comment on another consultant\'s scope (mechanical, electrical, structural, civil, etc.) beyond neutral progress narration; any item narrating another consultant\'s scope that lacks a closing referral to that consultant\'s review; admissions of design error or accepting responsibility; absolute or exhaustive language implying comprehensive review. Reword flagged items to: past-tense observation ("observed", "noted"), outcome-based follow-up assigned to the responsible party ("Contractor to correct and advise", "to be reviewed"), and general-review qualifiers where needed. An item touching another consultant\'s scope keeps its progress narration but must END with a referral sentence naming that consultant, e.g. "Refer to structural consultant\'s general review report." — do not duplicate a referral already present. PRESERVE all observed facts, locations, quantities and item numbers. Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<reworded text>","why":"<3-6 word reason>"}]} — include ONLY items that need rewording; if none, return {"items":[]}.'+STYLE_RULES+specSuffix();
   try{
     const call=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
@@ -1712,13 +1713,13 @@ async function aiLaneCheck(){
     if(!m) throw new Error('no result');
     const out=JSON.parse(m[0]);
     if((out.items||[]).length) snapshotUndo('lane check');
-    let changed=0; const flags=[];
+    let changed=0; const flags=[]; const norm=s=>s.replace(/\s+/g,' ').trim();
     (out.items||[]).forEach(rev=>{
       if(!rev.num||!rev.text) return;
       const f=findByNum(rev.num);
-      if(f){ const it=f.arr[f.idx]; if(it.text!==rev.text.trim()){ it.prevText=it.text; it.text=rev.text.trim(); changed++; flags.push(rev.num+(rev.why?' ('+rev.why+')':'')); } return; }
+      if(f){ const it=f.arr[f.idx]; if(norm(it.text)!==norm(rev.text)){ it.prevText=it.text; it.text=rev.text.trim(); changed++; flags.push(rev.num+(rev.why?' ('+rev.why+')':'')); } return; }
       const p=S.report.prev.find(x=>x.num===rev.num);
-      if(p && p.text!==rev.text.trim()){ p.prevText=p.text; p.text=rev.text.trim(); changed++; flags.push(rev.num+(rev.why?' ('+rev.why+')':'')); }
+      if(p && norm(p.text)!==norm(rev.text)){ p.prevText=p.text; p.text=rev.text.trim(); changed++; flags.push(rev.num+(rev.why?' ('+rev.why+')':'')); }
     });
     save(); render();
     const h2=$('#recheckHint');
