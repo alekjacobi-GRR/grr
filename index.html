@@ -638,6 +638,7 @@ async function drawWalkList(){
       ${thumbs?`<div class="thumbs">${thumbs}</div>`:''}
       <div class="ops">
         <button class="btn small sec ed">✎ Edit</button>
+        <button class="btn small sec mv">⇄ Move</button>
         <button class="btn small sec gr">Aa✓ Grammar</button>
         ${it.prevText&&it.prevText!==it.text?'<button class="btn small sec un">↩︎</button>':''}
         <button class="btn small sec ph">📷 Photo</button>
@@ -654,6 +655,17 @@ async function drawWalkList(){
     node.querySelector('.gr').onclick=()=>aiGrammar(node, ()=>it.text, setT);
     const un=node.querySelector('.un');
     if(un) un.onclick=()=>{ const t=it.text; it.text=it.prevText; it.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); };
+    node.querySelector('.mv').onclick=()=>{
+      if(node.querySelector('.mv-menu')){ node.querySelector('.mv-menu').remove(); return; }
+      const menu=document.createElement('div'); menu.className='mv-menu';
+      menu.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';
+      const mk=(label,fn)=>{ const b=document.createElement('button'); b.className='btn small sec'; b.textContent=label; b.onclick=fn; menu.appendChild(b); };
+      if(sec!=='progress') mk('→ Progress', ()=>moveItem(it, sec, 'progress'));
+      if(sec!=='obs') mk('→ Observations', ()=>moveItem(it, sec, 'obs'));
+      mk('→ 🙋 Super (not printed)', ()=>moveItem(it, sec, 'super'));
+      mk('✕', ()=>menu.remove());
+      node.appendChild(menu);
+    };
     // drag a photo from Apple Photos / Finder onto the item to link it
     node.addEventListener('dragover',e=>{ if(e.dataTransfer&&e.dataTransfer.types.includes('Files')){ e.preventDefault(); node.style.borderColor='var(--teal)'; }});
     node.addEventListener('dragleave',()=>{ node.style.borderColor=''; });
@@ -676,6 +688,26 @@ async function drawWalkList(){
     };
   });
   enableDrag(el);
+}
+
+/* ---- move an item between sections (or out of the report to Super) ---- */
+function moveItem(it, from, to){
+  const src = from==='progress'?S.report.progress:S.report.obs;
+  const i=src.findIndex(x=>x.id===it.id); if(i<0) return;
+  const [item]=src.splice(i,1);
+  if(to==='super'){
+    (S.report.superQs=S.report.superQs||[]).push({id:uid(),text:item.text,done:false});
+    (item.photoIds||[]).forEach(pid=>S.report.generalPhotoIds.push(pid));
+    toast('→ 🙋 Moved to Super questions — will NOT print in the report'+((item.photoIds||[]).length?'; its photos moved to general photos':''));
+  } else if(to==='progress'){
+    const insertAt=(S.report.progress.length&&S.report.progress[S.report.progress.length-1].boiler)?S.report.progress.length-1:S.report.progress.length;
+    S.report.progress.splice(insertAt,0,item);
+    toast('Moved to Progress of the Work — numbers updated');
+  } else {
+    S.report.obs.push(item);
+    toast('Moved to Observations & Comments — numbers updated');
+  }
+  save(); render();
 }
 
 /* ---- drag to reorder (press ⠿ and move) ---- */
@@ -731,7 +763,7 @@ async function runCommand(cmd){
   const ctx={progress:prog.map(x=>({num:x.num,text:x.text.slice(0,70)})),
              observations:obs.map(x=>({num:x.num,text:x.text.slice(0,70)})),
              previous_deficiencies:prev.map(x=>({num:x.num,text:x.text.slice(0,70)}))};
-  const SYS='You interpret a voice command for a construction report app and respond with ONLY a JSON object, no prose. Schemas: {"action":"move","num":"<item no>","to":"end"|"start"|"after"|"before","ref":"<item no>"} (ref only when to is after/before; items stay within their own section), {"action":"resolve","num":"<previous item no>"}, {"action":"reopen","num":"<previous item no>"}, {"action":"delete","num":"<item no>"}, {"action":"unknown","why":"<short reason>"}. Current items: '+JSON.stringify(ctx);
+  const SYS='You interpret a voice command for a construction report app and respond with ONLY a JSON object, no prose. Schemas: {"action":"move","num":"<item no>","to":"end"|"start"|"after"|"before","ref":"<item no>"} (reordering within the item\'s own section; ref only when to is after/before), {"action":"transfer","num":"<item no>","to":"progress"|"observations"|"super"} (moving an item to a different section; "super" = questions/discussion points for the site superintendent, which are NOT printed in the report), {"action":"resolve","num":"<previous item no>"}, {"action":"reopen","num":"<previous item no>"}, {"action":"delete","num":"<item no>"}, {"action":"unknown","why":"<short reason>"}. Current items: '+JSON.stringify(ctx);
   try{
     const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
       headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
@@ -765,6 +797,12 @@ function applyCommand(c){
     let target = refIdx!=null ? refIdx : (c.to==='start'?0:f.arr.length);
     f.arr.splice(Math.max(0,Math.min(target,f.arr.length)),0,it);
     save(); render(); toast('Moved item — numbers updated');
+  } else if(c.action==='transfer'){
+    const f=findByNum(c.num); if(!f){ toast('Item '+c.num+' not found'); return; }
+    const from = f.arr===S.report.progress?'progress':'obs';
+    const to = c.to==='observations'?'obs':c.to;
+    if(to===from){ toast('Item '+c.num+' is already there'); return; }
+    moveItem(f.arr[f.idx], from, to);
   } else if(c.action==='resolve'||c.action==='reopen'){
     const p=S.report.prev.find(x=>x.num===c.num);
     if(!p){ toast('Item '+c.num+' not found in previous deficiencies'); return; }
