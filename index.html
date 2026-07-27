@@ -971,11 +971,12 @@ How to build the items:
 - Concise, factual, past-tense observational voice ("observed", "noted"). 1–3 sentences per item.
 - Stay in the architect's lane: no means and methods, no safety directives, refer other consultants' scopes to them.
 - Resolve self-corrections (keep only final intent). Ignore filler, asides, and conversation not meant for the report.
+- General Review scope ONLY: every item must describe work or conditions physically observed on site, or site follow-up arising from them. EXCLUDE contract-administration and meeting-minutes business even when the recording covers it at length — submittal or shop-drawing status ("fireproofing shop drawings: submission outstanding"), RFI/PC/change-order logs and status, schedule and sequencing discussion, payment or administrative matters. These belong in meeting minutes, not a General Review Report — silently drop them (a question for the super may still go to "super_questions" if the speaker asks one).
 - Do not invent anything not in the notes.
 - Use OAA-appropriate report language and correct specification terminology; where the project specifications clearly identify the scope, cite the section (e.g. "as specified in Section 09 22 16").
 - Capitalize compass directions when identifying elevations, walls or areas ("North elevation", "East and West elevations") and capitalize "Level(s)" when numbered.
 
-Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+STYLE_RULES+specSuffix()+await docSuffix(notes);
+Example item voice: "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."`+STYLE_RULES+scopeSuffix()+specSuffix()+await docSuffix(notes);
   try{
     const callModel=async(model)=>{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
@@ -1033,6 +1034,12 @@ Example item voice: "Studwork framing continuing throughout levels 1-6; electric
 
 /* ---- shared AI style rules ---- */
 const STYLE_RULES='\nStyle: capitalize compass directions when identifying elevations, walls or areas — "North elevation", "South wall", "East and West elevations" — consistent with the drawing conventions. Capitalize "Level"/"Levels" when numbered (Level 2, Levels 6 and 7).';
+/* learned out-of-scope examples — grows every time the architect confirms "does not belong in a general review" */
+function scopeSuffix(){
+  const ex=(S.settings.scopeExamples||[]);
+  if(!ex.length) return '';
+  return '\n\nThe architect has previously flagged items like the following as NOT belonging in a General Review Report (meeting-minutes / contract-administration business, not site review). Treat anything of the same kind as out of scope:\n- '+ex.slice(-20).map(t=>t.slice(0,220)).join('\n- ');
+}
 
 /* ---- inline item editor with spoken AI rewrite ---- */
 function startInlineEdit(node, getText, setText){
@@ -1232,6 +1239,7 @@ Style rules, matching the firm's reports:
 - Progress items simply describe work status ("continuing", "underway", "complete").
 - If the speaker corrects themselves ("no, wait, actually…"), keep ONLY the corrected final intent.
 - Ignore filler, asides, and anything clearly not meant for the report.
+- General Review scope ONLY: an item must describe work or conditions physically observed on site, or site follow-up arising from them. EXCLUDE contract-administration and meeting-minutes business — submittal or shop-drawing status ("fireproofing shop drawings: submission outstanding"), RFI/PC/change-order logs, schedule and sequencing discussion, payment or administrative matters. If the notes contain ONLY such content, output exactly: OFF-SCOPE: followed by one short sentence saying it belongs in meeting minutes, not the General Review Report.
 
 Examples of the target voice:
 - "Studwork framing continuing throughout levels 1-6; electrical rough-in continuing (3rd floor suites substantially complete, common areas underway)."
@@ -1251,7 +1259,7 @@ async function aiCompose(raw){
       headers:{'content-type':'application/json','x-api-key':key,
         'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body: JSON.stringify({model:'claude-haiku-4-5-20251001', max_tokens:400,
-        system: AI_SYS+STYLE_RULES+specSuffix()+await docSuffix(raw),
+        system: AI_SYS+STYLE_RULES+scopeSuffix()+specSuffix()+await docSuffix(raw),
         messages:[{role:'user',content:'Section: '+(WALKSEC==='progress'?'Progress of the Work':'Observations and Comments')+'\nSpoken notes:\n'+raw}]})
     });
     if(!resp.ok){
@@ -1501,8 +1509,10 @@ function renderReport(m){
     <button class="btn sec" id="recheckBtn" style="margin-top:10px">✔️ Re-check wording against specs &amp; drawings</button>
     <button class="btn sec" id="grammarAllBtn" style="margin-top:8px">Aa✓ Grammar check — all items</button>
     <button class="btn sec" id="laneBtn" style="margin-top:8px">🛡 OAA / Pro-Demnity lane check — all items</button>
+    <button class="btn sec" id="dupBtn" style="margin-top:8px">⧉ Clean up — duplicates &amp; out-of-scope items</button>
     ${(()=>{try{const u=JSON.parse(localStorage.getItem('grr-undo')||'null');return u?'<button class="btn sec" id="undoAiBtn" style="margin-top:8px;border-color:var(--amber);color:var(--amber)">↩︎ Undo last AI pass ('+esc(u.label)+')</button>':''}catch(e){return ''}})()}
     <p class="hint" id="recheckHint"></p>
+    <div id="dupOut"></div>
     <div class="gate">
       <b>Is this ready to go to print?</b>
       <p class="note">Review the document above — check wording, item numbers, dates and photo rotation. Fix photos in the Photos tab, wording in Walk / Previous tabs.</p>
@@ -1527,11 +1537,13 @@ function renderReport(m){
   $('#recheckBtn').onclick=aiRecheck;
   $('#grammarAllBtn').onclick=aiGrammarAll;
   $('#laneBtn').onclick=aiLaneCheck;
+  $('#dupBtn').onclick=aiCleanup;
   const ub=$('#undoAiBtn'); if(ub)ub.onclick=undoLastAI;
   $('#notReady').onclick=()=>{ gateOK=false; $('#genOut').innerHTML=''; toast('OK — adjust, then come back'); };
   $('#readyBtn').onclick=async()=>{ gateOK=true; await generateAll(); };
   $('#closeOut').onclick=closeOut;
   drawPreview();
+  drawDupGroups();
 }
 async function drawPreview(){
   const el=$('#prevDoc'); if(!el)return;
@@ -1625,13 +1637,15 @@ Respond with ONLY JSON: {"items":[{"num":"<item no>","text":"<revised text>"}], 
 /* ---- one-level undo for batch AI passes ---- */
 function snapshotUndo(label){
   try{ localStorage.setItem('grr-undo', JSON.stringify({label, at:Date.now(),
-    progress:S.report.progress, obs:S.report.obs, prev:S.report.prev})); }catch(e){}
+    progress:S.report.progress, obs:S.report.obs, prev:S.report.prev,
+    generalPhotoIds:S.report.generalPhotoIds})); }catch(e){}
 }
 function undoLastAI(){
   try{
     const u=JSON.parse(localStorage.getItem('grr-undo')||'null');
     if(!u){ toast('Nothing to undo'); return; }
     S.report.progress=u.progress; S.report.obs=u.obs; S.report.prev=u.prev;
+    if(u.generalPhotoIds) S.report.generalPhotoIds=u.generalPhotoIds;
     localStorage.removeItem('grr-undo');
     save(); render(); toast('↩︎ Restored items as they were before "'+u.label+'"');
   }catch(e){ toast('Undo failed: '+e.message); }
@@ -1729,6 +1743,127 @@ async function aiLaneCheck(){
     const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Lane check failed: '+e.message; h2.style.color='var(--red)'; }
   }
   const btn2=$('#laneBtn'); if(btn2)btn2.disabled=false;
+}
+
+/* ---- clean-up pass: duplicates & out-of-scope items (review-first, nothing auto-applies) ---- */
+let DUP_GROUPS=[], OFFSCOPE=[];
+function itemById(id){
+  let i=S.report.progress.findIndex(x=>x.id===id); if(i>=0) return {arr:S.report.progress, idx:i};
+  i=S.report.obs.findIndex(x=>x.id===id); if(i>=0) return {arr:S.report.obs, idx:i};
+  return null;
+}
+async function aiCleanup(){
+  if(!S.settings.aiKey){ toast('Needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  const {prog,obs}=numbered();
+  const items=[...prog,...obs];
+  if(items.length<1){ toast('No items yet'); return; }
+  const h=$('#recheckHint'); if(h){ h.textContent='⧉ Scanning '+items.length+' items for duplicates and out-of-scope content…'; h.style.color=''; }
+  const btn=$('#dupBtn'); if(btn)btn.disabled=true;
+  const SYS='You are reviewing the items of an Ontario architect\'s General Review Report that were dictated from a full meeting/site-walk recording, so the same issue may appear more than once in different wording, and meeting-minutes business may have leaked in. Two tasks:\n1. DUPLICATES — identify groups of items that describe the SAME issue, condition or instruction (same subject and same location) in different wording, e.g. one says "Change Notice" and another "Change Order" for the same fire-separation condition. Do NOT group items that merely share a topic but concern different locations, elements, statuses or scopes. For each group propose ONE merged item that preserves every distinct fact from all versions (locations, quantities, parties, follow-up actions) without repetition, in concise past-tense observational voice, keeping any consultant-referral sentence.\n2. OUT-OF-SCOPE — identify items that do not belong in a General Review Report because they are contract-administration or meeting-minutes business rather than site review: submittal or shop-drawing status ("fireproofing shop drawings: submission outstanding"), RFI/PC/change-order logs, schedule or sequencing discussion, payment or administrative matters. An item describing a condition OBSERVED ON SITE is in scope even if it mentions a Change Notice arising from it. The standing consultant-referral item is in scope.\nDo NOT reword items otherwise. Respond with ONLY JSON: {"groups":[{"keep":"<lowest item no of the group>","remove":["<other item nos>"],"text":"<merged item text>","why":"<3-6 word reason>"}],"offscope":[{"num":"<item no>","why":"<3-6 word reason>"}]} — empty arrays if none.'+STYLE_RULES+scopeSuffix();
+  try{
+    const call=async(model)=>{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model,max_tokens:16000,system:SYS,
+          messages:[{role:'user',content:'Report items:\n'+items.map(x=>x.num+'\t'+x.text).join('\n')}]})});
+      const data=await resp.json().catch(()=>({}));
+      return {resp,data};
+    };
+    let {resp,data}=await call('claude-sonnet-5');
+    let txt=resp.ok?(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''):'';
+    let m=txt.match(/\{[\s\S]*\}/);
+    if(!m){ ({resp,data}=await call('claude-haiku-4-5-20251001'));
+      if(resp.ok){ txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''); m=txt.match(/\{[\s\S]*\}/); } }
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||('HTTP '+resp.status));
+    if(!m) throw new Error('no result');
+    const out=JSON.parse(m[0]);
+    // resolve item numbers to ids NOW — numbering shifts as merges/removals apply
+    DUP_GROUPS=[]; OFFSCOPE=[];
+    const idOf=num=>{ const f=findByNum(num); return f? f.arr[f.idx].id : null; };
+    (out.groups||[]).forEach(g=>{
+      if(!g.keep||!g.text||!(g.remove||[]).length) return;
+      const keepId=idOf(g.keep); const removeIds=(g.remove||[]).map(idOf).filter(Boolean).filter(id=>id!==keepId);
+      if(keepId && removeIds.length) DUP_GROUPS.push({keepId, removeIds, text:g.text.trim(), why:g.why||''});
+    });
+    (out.offscope||[]).forEach(o=>{
+      if(!o.num) return; const id=idOf(o.num);
+      if(id && !DUP_GROUPS.some(g=>g.keepId===id||g.removeIds.includes(id))) OFFSCOPE.push({id, why:o.why||''});
+    });
+    const h2=$('#recheckHint');
+    if(h2) h2.textContent = (DUP_GROUPS.length||OFFSCOPE.length)
+      ? ('⧉ Found '+DUP_GROUPS.length+' duplicate group(s) and '+OFFSCOPE.length+' out-of-scope item(s) — review below; nothing is changed until you approve')
+      : '⧉ Clean — no duplicates or out-of-scope items found';
+    drawDupGroups();
+  }catch(e){
+    const h2=$('#recheckHint'); if(h2){ h2.textContent='⚠️ Clean-up check failed: '+e.message; h2.style.color='var(--red)'; }
+  }
+  const btn2=$('#dupBtn'); if(btn2)btn2.disabled=false;
+}
+function drawDupGroups(){
+  const el=$('#dupOut'); if(!el) return;
+  el.innerHTML='';
+  // drop anything whose items no longer exist (edited elsewhere, already merged, closed out)
+  DUP_GROUPS=DUP_GROUPS.filter(g=>{ g.removeIds=g.removeIds.filter(id=>itemById(id)); return itemById(g.keepId)&&g.removeIds.length; });
+  OFFSCOPE=OFFSCOPE.filter(o=>itemById(o.id));
+  if(!DUP_GROUPS.length && !OFFSCOPE.length) return;
+  const {prog,obs}=numbered();
+  const numOf=id=>{ const hit=[...prog,...obs].find(x=>x.id===id); return hit?hit.num:'?'; };
+  const textOf=id=>{ const f=itemById(id); return f? f.arr[f.idx].text : ''; };
+  DUP_GROUPS.forEach((g,gi)=>{
+    const all=[g.keepId,...g.removeIds];
+    el.insertAdjacentHTML('beforeend',
+      `<div style="border:1px solid var(--teal);border-radius:10px;padding:10px;margin-top:10px">
+        <b>⧉ Duplicate group</b>${g.why?' <span class="hint">— '+esc(g.why)+'</span>':''}
+        ${all.map(id=>`<div style="margin:6px 0"><b>${numOf(id)}</b> <span class="hint">${esc(textOf(id))}</span></div>`).join('')}
+        <label class="f">Proposed merged item (edit before merging if needed)</label>
+        <textarea class="dupTxt" data-g="${gi}" style="min-height:84px">${esc(g.text)}</textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small" data-g="${gi}" data-op="merge">Merge — keep ${numOf(g.keepId)}, remove ${g.removeIds.map(numOf).join(', ')}</button>
+          <button class="btn small sec" data-g="${gi}" data-op="dismissG">Not duplicates</button>
+        </div>
+      </div>`);
+  });
+  OFFSCOPE.forEach((o,oi)=>{
+    el.insertAdjacentHTML('beforeend',
+      `<div style="border:1px solid var(--amber);border-radius:10px;padding:10px;margin-top:10px">
+        <b>🚫 Not general-review scope?</b>${o.why?' <span class="hint">— '+esc(o.why)+'</span>':''}
+        <div style="margin:6px 0"><b>${numOf(o.id)}</b> <span class="hint">${esc(textOf(o.id))}</span></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small warn" data-o="${oi}" data-op="dropOff">Remove — doesn't belong (app learns this)</button>
+          <button class="btn small sec" data-o="${oi}" data-op="keepOff">Keep — it belongs</button>
+        </div>
+      </div>`);
+  });
+  el.querySelectorAll('button[data-op]').forEach(b=>b.onclick=()=>{
+    const op=b.dataset.op;
+    if(op==='merge'){
+      const gi=+b.dataset.g, g=DUP_GROUPS[gi]; if(!g) return;
+      const f=itemById(g.keepId); if(!f){ DUP_GROUPS.splice(gi,1); drawDupGroups(); return; }
+      const ta=el.querySelector('.dupTxt[data-g="'+gi+'"]');
+      const merged=(ta&&ta.value.trim())||g.text;
+      snapshotUndo('duplicate merge');
+      const it=f.arr[f.idx]; it.prevText=it.text; it.text=merged;
+      g.removeIds.forEach(id=>{ const r=itemById(id); if(r){ const rem=r.arr[r.idx];
+        it.photoIds=(it.photoIds||[]).concat(rem.photoIds||[]); r.arr.splice(r.idx,1); } });
+      DUP_GROUPS.splice(gi,1);
+      save(); render(); toast('⧉ Merged — photos kept, ↩︎ Undo available');
+    }else if(op==='dismissG'){ DUP_GROUPS.splice(+b.dataset.g,1); drawDupGroups(); }
+    else if(op==='dropOff'){
+      const oi=+b.dataset.o, o=OFFSCOPE[oi]; if(!o) return;
+      const f=itemById(o.id); if(!f){ OFFSCOPE.splice(oi,1); drawDupGroups(); return; }
+      snapshotUndo('out-of-scope removal');
+      const rem=f.arr[f.idx];
+      (rem.photoIds||[]).forEach(pid=>S.report.generalPhotoIds.push(pid));
+      const ex=S.settings.scopeExamples=(S.settings.scopeExamples||[]);
+      const t=rem.text.replace(/\s+/g,' ').trim();
+      if(t && !ex.includes(t)){ ex.push(t); if(ex.length>20) ex.shift(); }
+      f.arr.splice(f.idx,1);
+      OFFSCOPE.splice(oi,1);
+      save(); render(); toast('🚫 Removed & learned — future dictation will skip items like this; ↩︎ Undo available');
+    }
+    else if(op==='keepOff'){ OFFSCOPE.splice(+b.dataset.o,1); drawDupGroups(); }
+  });
 }
 
 async function closeOut(){
