@@ -1556,6 +1556,12 @@ async function drawPreview(){
    <img class="sig" src="data:image/png;base64,${S.settings.sigCustom||SIG_B64}">
    <div class="sigline"></div>
    <div style="font-size:11px">${esc(S.settings.firm)}<br>${esc(S.settings.firmEmail)}</div>
+   <div style="margin-top:10px;font-size:11px">
+     <span style="font-size:10px;color:#555">Distribution:</span>
+     ${S.settings.dist.length
+        ? S.settings.dist.map(d=>`<div style="display:flex;justify-content:space-between;border-bottom:1px dotted #ccc;padding:1px 0"><span>${esc(d.name)}</span><span style="text-decoration:underline">${esc(d.email)}</span></div>`).join('')
+        : '<span style="color:#c00"> — no recipients set (add them in Setup) —</span>'}
+   </div>
    <h3>PROGRESS OF THE WORK:</h3>${prog.map(it).join('')}
    <h3>OBSERVATIONS AND COMMENTS</h3>${obs.length?obs.map(it).join(''):'<div class="it"><span style="color:#999">— none recorded yet —</span></div>'}
    <h3>PREVIOUS AND UNRESOLVED DEFICIENCIES</h3>${prev.map(it).join('')}
