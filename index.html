@@ -1928,7 +1928,18 @@ async function buildPdf(){
   /* photo array pages */
   const itemNum={};
   [...prog,...obs].forEach(x=>{ (x.photoIds||[]).forEach(pid=>itemNum[pid]=x.num); });
-  const orderedIds=[...[...prog,...obs].flatMap(x=>x.photoIds||[]), ...S.report.generalPhotoIds];
+  const rawOrdered=[...[...prog,...obs].flatMap(x=>x.photoIds||[]), ...S.report.generalPhotoIds];
+  // dedupe: a photo referenced by an item must not repeat in the general array (item copy, with caption, wins)
+  const blobHash=async b=>{ const d=await crypto.subtle.digest('SHA-256', await b.arrayBuffer());
+    return [...new Uint8Array(d)].slice(0,16).join('.'); };
+  const seenHashes=new Set(), orderedIds=[]; let dupes=0;
+  for(const pid of rawOrdered){
+    const rec=await photoGet(pid); if(!rec) continue;
+    const h=await blobHash(rec.blob);
+    if(seenHashes.has(h)){ dupes++; continue; }
+    seenHashes.add(h); orderedIds.push(pid);
+  }
+  if(dupes) toast(dupes+' duplicate photo'+(dupes>1?'s':'')+' omitted from the array (item-referenced copy kept)');
   const cols=Math.max(1,S.settings.cols|0), rows=Math.max(1,S.settings.rows|0);
   const per=cols*rows;
   const PM=28, GAP=8, CAPH=12, TOP=56, BOT=44;
