@@ -539,7 +539,7 @@ function fmtDates(){
 
 /* ======== UI ======== */
 const $ = s=>document.querySelector(s);
-let TAB='walk', WALKSEC='obs';
+let TAB='walk', WALKSEC='progress';
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2600); }
 function setHeader(){
   $('#hdrNo').textContent = 'No. '+S.report.number;
@@ -1093,6 +1093,62 @@ async function aiRewriteInline(ta, hint){
   try{ r.start(); }catch(e){}
 }
 
+/* ---- dated update on a carried-forward item ---- */
+function startUpdateEdit(node, p){
+  if(node.querySelector('.inline-ed')) return;
+  const el=node.querySelector('p');
+  const wrap=document.createElement('div'); wrap.className='inline-ed';
+  wrap.innerHTML=`<p class="hint" style="text-align:left;margin-top:6px">Just the new development — it gets appended as “Update in Report #${S.report.number}: …”. The original wording stays as-is.</p>
+    <textarea style="min-height:72px;margin-top:6px" placeholder="e.g. Contractor reports protection board installed and damaged waterproofing corrected."></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="btn small" data-a="save">💾 Add update</button>
+      <button class="btn small sec" data-a="ai">🎙✨ Speak the update</button>
+      <button class="btn small sec" data-a="cancel" style="flex:0 0 auto">✕</button>
+    </div>
+    <p class="hint ie-hint" style="text-align:left;margin-top:6px"></p>`;
+  el.style.display='none'; el.after(wrap);
+  const ta=wrap.querySelector('textarea');
+  const ops=node.querySelector('.ops'); if(ops) ops.style.display='none';
+  wrap.querySelector('[data-a=save]').onclick=()=>{
+    let v=ta.value.trim(); if(!v) return;
+    v=v.replace(/^update\s+in\s+report\s*#?\s*\d*\s*:?\s*/i,'');
+    p.prevText=p.text;
+    p.text=p.text.replace(/\s*$/,'')+' Update in Report #'+S.report.number+': '+v;
+    save(); render(); toast('Update in Report #'+S.report.number+' added — ↩︎ on the item to revert');
+  };
+  wrap.querySelector('[data-a=cancel]').onclick=()=>{ wrap.remove(); el.style.display=''; if(ops) ops.style.display=''; };
+  wrap.querySelector('[data-a=ai]').onclick=()=>aiUpdateInline(ta, wrap.querySelector('.ie-hint'), p);
+  ta.focus();
+}
+async function aiUpdateInline(ta, hint, p){
+  if(!S.settings.aiKey){ toast('AI compose needs your API key — add it in Setup'); return; }
+  const go=async(instr)=>{
+    if(!instr||!instr.trim()) return;
+    hint.textContent='✨ Writing the update…';
+    try{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,
+          system:'You write the dated status UPDATE for a carried-forward deficiency item in an Ontario architect\'s General Review Report. From the spoken notes, output ONLY the update text — 1-2 concise sentences reporting the new development (what the Contractor reports, what was observed, what remains outstanding and who is to act). Do NOT restate the original item, do NOT include any "Update in Report #N:" prefix (the app adds it), no preamble, no quotes. Past-tense observational OAA voice; attribute unverified claims ("Contractor reports…", "Contractor confirmed…") rather than asserting them as observed fact; stay within the architect\'s lane.'+STYLE_RULES+specSuffix(),
+          messages:[{role:'user',content:'Original carried-forward item:\n'+p.text+'\n\nSpoken notes for the new update:\n'+instr}]})});
+      const data=await resp.json();
+      if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
+      const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+      if(!text) throw new Error('empty response');
+      ta.value=text.replace(/^update\s+in\s+report\s*#?\s*\d*\s*:?\s*/i,'');
+      hint.textContent='✨ Written — review, adjust if needed, then 💾 Add update';
+    }catch(e){ hint.textContent='⚠️ '+e.message; }
+  };
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ const t=prompt('What\'s the update?'); go(t); return; }
+  const r=new SR(); r.lang='en-CA'; r.continuous=false; r.interimResults=false;
+  hint.textContent='🎙 Listening — say what\'s new, e.g. "contractor redid the work and confirmed protection board was installed"';
+  r.onresult=e=>go(e.results[0][0].transcript);
+  r.onerror=ev=>{ hint.textContent='Mic: '+ev.error+' — or type the update right in the box above'; };
+  try{ r.start(); }catch(e){}
+}
+
 /* ---- per-item grammar & terminology check ---- */
 async function aiGrammar(node, getText, setText){
   if(!S.settings.aiKey){ toast('Grammar check needs your API key — add it in Setup'); TAB='settings'; render(); return; }
@@ -1392,7 +1448,7 @@ function renderPrev(m){
   const open = S.report.prev.filter(p=>!p.resolved).length;
   m.innerHTML=`
   <div class="card"><h2>Previous &amp; unresolved deficiencies <span class="badge">${open} open</span></h2>
-  <p class="note">Carried forward under their original item numbers. Tap ✓ to mark resolved (drops off Report ${S.report.number}), ✎ to update the wording.</p></div>
+  <p class="note">Carried forward under their original item numbers. Tap ✓ to mark resolved (drops off Report ${S.report.number}), ✎ to rewrite the wording freely, or ＋R${S.report.number} to append a dated update ("Update in Report #${S.report.number}: …") without touching the original.</p></div>
   <div id="prevList"></div>
   <button class="btn sec" id="addPrevBtn" style="margin-top:4px">+ Add a carried-forward item</button>`;
   const el=$('#prevList');
@@ -1403,7 +1459,8 @@ function renderPrev(m){
       <p>${esc(p.text)}</p>
       <div class="ops">
         <button class="btn small ${p.resolved?'sec':''}" data-i="${i}" data-op="res">${p.resolved?'↩︎ Reopen':'✓ Resolved'}</button>
-        <button class="btn small sec" data-i="${i}" data-op="ed">✎ Update</button>
+        <button class="btn small sec" data-i="${i}" data-op="ed">✎ Edit</button>
+        <button class="btn small sec" data-i="${i}" data-op="up">＋R${S.report.number}</button>
         <button class="btn small sec" data-i="${i}" data-op="gr">Aa✓</button>
         <button class="btn small sec" data-i="${i}" data-op="ln">🛡</button>
         <button class="btn small sec" data-i="${i}" data-op="sp">§✓</button>
@@ -1419,6 +1476,7 @@ function renderPrev(m){
     else if(b.dataset.op==='ln') aiLaneOne(b.closest('.item'), ()=>p.text, setP);
     else if(b.dataset.op==='sp') aiSpecOne(b.closest('.item'), ()=>p.text, setP);
     else if(b.dataset.op==='un'){ const t=p.text; p.text=p.prevText; p.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); }
+    else if(b.dataset.op==='up') startUpdateEdit(b.closest('.item'), p);
     else startInlineEdit(b.closest('.item'), ()=>p.text, setP);
   });
   $('#addPrevBtn').onclick=()=>{
