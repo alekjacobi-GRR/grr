@@ -562,7 +562,8 @@ function renderWalk(m){
     </div>
   </div>
   <h2 class="secttl">${WALKSEC==='progress'?'Progress of the Work':'Observations &amp; Comments'} — ${(WALKSEC==='progress'?prog:obs).length} item(s)</h2>
-  <button class="btn sec small" id="cmdBtn" style="margin-bottom:10px;width:100%">🎛✨ AI command — say "move 18.1 to the end" or "mark 13.9 resolved"</button>
+  <button class="btn sec small" id="cmdBtn" style="margin-bottom:4px;width:100%">🎛✨ AI command — say "move 19.1 to the end", "move 19.7 to super", "mark 13.9 resolved"</button>
+  <p class="hint" id="cmdHint" style="margin:0 0 10px;text-align:left"></p>
   <p class="hint" style="margin:0 0 8px">…or press ⠿ on an item and drag it to reorder. Numbers follow the order.</p>
   <div id="walkList"></div>`;
   $('#segP').onclick=()=>{WALKSEC='progress';render();};
@@ -639,7 +640,8 @@ async function drawWalkList(){
       <div class="ops">
         <button class="btn small sec ed">✎ Edit</button>
         <button class="btn small sec mv">⇄ Move</button>
-        <button class="btn small sec gr">Aa✓ Grammar</button>
+        <button class="btn small sec gr">Aa✓</button>
+        <button class="btn small sec ln">🛡</button>
         ${it.prevText&&it.prevText!==it.text?'<button class="btn small sec un">↩︎</button>':''}
         <button class="btn small sec ph">📷 Photo</button>
         <button class="btn small warn dl">🗑</button>
@@ -653,6 +655,7 @@ async function drawWalkList(){
     const setT=v=>{ it.prevText=it.text; it.text=v; save(); render(); };
     node.querySelector('.ed').onclick=()=>startInlineEdit(node, ()=>it.text, setT);
     node.querySelector('.gr').onclick=()=>aiGrammar(node, ()=>it.text, setT);
+    node.querySelector('.ln').onclick=()=>aiLaneOne(node, ()=>it.text, setT);
     const un=node.querySelector('.un');
     if(un) un.onclick=()=>{ const t=it.text; it.text=it.prevText; it.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); };
     node.querySelector('.mv').onclick=()=>{
@@ -757,8 +760,17 @@ async function aiCommand(){
   r.onerror=ev=>toast('Mic: '+ev.error);
   try{ r.start(); }catch(e){}
 }
+function setCmdHint(msg){ const h=$('#cmdHint'); if(h){ h.textContent=msg; } }
+function describeCmd(c){
+  if(c.action==='move') return 'Reorder '+c.num+' → '+(c.to==='end'?'end of its section':c.to==='start'?'start of its section':(c.to+' '+(c.ref||'')));
+  if(c.action==='transfer') return 'Move '+c.num+' → '+(c.to==='super'?'🙋 Super questions (NOT printed in the report)':c.to==='progress'?'Progress of the Work':'Observations & Comments');
+  if(c.action==='resolve') return 'Mark '+c.num+' resolved';
+  if(c.action==='reopen') return 'Reopen '+c.num;
+  if(c.action==='delete') return 'Delete '+c.num;
+  return 'Not understood'+(c.why?': '+c.why:'');
+}
 async function runCommand(cmd){
-  toast('🎛 "'+cmd+'"');
+  setCmdHint('🎛 Heard: "'+cmd+'" — interpreting…');
   const {prog,obs,prev}=numbered();
   const ctx={progress:prog.map(x=>({num:x.num,text:x.text.slice(0,70)})),
              observations:obs.map(x=>({num:x.num,text:x.text.slice(0,70)})),
@@ -774,8 +786,11 @@ async function runCommand(cmd){
     if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
     const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
     const m=txt.match(/\{[\s\S]*\}/); if(!m) throw new Error('no command understood');
-    applyCommand(JSON.parse(m[0]));
-  }catch(e){ toast('Command failed: '+e.message); }
+    const c=JSON.parse(m[0]);
+    const desc='🎛 Heard: "'+cmd+'" → '+describeCmd(c);
+    applyCommand(c);
+    setCmdHint(desc);
+  }catch(e){ setCmdHint('🎛 Heard: "'+cmd+'" → ⚠️ '+e.message); toast('Command failed: '+e.message); }
 }
 function findByNum(num){
   const {prog,obs}=numbered();
@@ -1035,6 +1050,29 @@ async function aiGrammar(node, getText, setText){
   }catch(e){ toast('Grammar check failed: '+e.message); }
 }
 
+/* ---- per-item OAA lane check ---- */
+async function aiLaneOne(node, getText, setText){
+  if(!S.settings.aiKey){ toast('Lane check needs your API key — add it in Setup'); TAB='settings'; render(); return; }
+  const cur=getText();
+  toast('🛡 Lane-checking this item…');
+  try{
+    const sys='You are checking ONE General Review Report item for an Ontario architect against OAA general-review scope and Pro-Demnity risk wording. Out-of-lane signals: directing construction means, methods, techniques, sequences or procedures; directing or commenting on site safety; language implying supervision, inspection, approval or certification ("inspected", "approved", "verified", "ensure", "guarantee"); asserting conformance or non-conformance as fact; technical comment on another consultant\'s scope beyond neutral progress narration or a referral; admissions of design error. If out of lane, reword it: past-tense observation, outcome-based follow-up assigned to the responsible party, referrals for other consultants\' scopes. PRESERVE all observed facts, locations and quantities. If the item is already within the lane, output it EXACTLY unchanged. Output ONLY the item text.'+STYLE_RULES+specSuffix();
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+      headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+        'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,system:sys,
+        messages:[{role:'user',content:cur}]})});
+    const data=await resp.json();
+    if(!resp.ok) throw new Error((data.error&&data.error.message)||resp.status);
+    const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+    if(!text) throw new Error('empty response');
+    if(text===cur){ toast('🛡 In lane — no change needed'); return; }
+    startInlineEdit(node, ()=>text, setText);
+    const h=node.querySelector('.ie-hint');
+    if(h) h.textContent='🛡 Lane rewording proposed — review and Save, or ✕ to keep your original';
+  }catch(e){ toast('Lane check failed: '+e.message); }
+}
+
 /* ---- AI compose: spoken intent -> report-ready item ---- */
 function specSuffix(){
   const s=(S.settings.specText||'').trim();
@@ -1270,6 +1308,7 @@ function renderPrev(m){
         <button class="btn small ${p.resolved?'sec':''}" data-i="${i}" data-op="res">${p.resolved?'↩︎ Reopen':'✓ Resolved'}</button>
         <button class="btn small sec" data-i="${i}" data-op="ed">✎ Update</button>
         <button class="btn small sec" data-i="${i}" data-op="gr">Aa✓</button>
+        <button class="btn small sec" data-i="${i}" data-op="ln">🛡</button>
         ${p.prevText&&p.prevText!==p.text?`<button class="btn small sec" data-i="${i}" data-op="un">↩︎</button>`:''}
       </div>
     </div>`);
@@ -1279,6 +1318,7 @@ function renderPrev(m){
     const setP=v=>{ p.prevText=p.text; p.text=v; save(); render(); };
     if(b.dataset.op==='res'){ p.resolved=!p.resolved; save(); render(); }
     else if(b.dataset.op==='gr') aiGrammar(b.closest('.item'), ()=>p.text, setP);
+    else if(b.dataset.op==='ln') aiLaneOne(b.closest('.item'), ()=>p.text, setP);
     else if(b.dataset.op==='un'){ const t=p.text; p.text=p.prevText; p.prevText=t; save(); render(); toast('↩︎ Swapped back — tap again to redo'); }
     else startInlineEdit(b.closest('.item'), ()=>p.text, setP);
   });
