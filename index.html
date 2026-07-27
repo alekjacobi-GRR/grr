@@ -1951,7 +1951,6 @@ async function buildPdf(){
       const cellTop=H-TOP-row*(ch+CAPH+GAP);
       const cy=cellTop-ch;
       ppg.drawImage(img,{x:cx, y:cy, width:cw, height:ch});
-      ppg.drawRectangle({x:cx,y:cy,width:cw,height:ch,borderColor:rgb(.55,.55,.55),borderWidth:.5,opacity:0,borderOpacity:1});
       const cap=itemNum[slice[i]];
       if(cap) ppg.drawText('Item '+cap,{x:cx+1,y:cy-9.5,size:7.5,font:helvB});
     }
