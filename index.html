@@ -2220,10 +2220,36 @@ async function importReport(file){
       }
     }
     if(!prog.length&&!obs.length&&!prev.length) throw new Error('No numbered report items found');
+    // layout-agnostic fallback: if the pattern match missed project details or distribution, extract them with AI
+    if((!hdr.project || !hdr.projNo || !dist.length) && S.settings.aiKey){
+      toast('Reading project details with AI…');
+      const ai=await aiExtractHeader(paras.slice(0,90).join('\n'));
+      if(ai){
+        for(const k of ['project','location','projNo','permit','contractor','present'])
+          if(!hdr[k] && ai[k]) hdr[k]=String(ai[k]).trim();
+        if(!dist.length && Array.isArray(ai.dist))
+          ai.dist.forEach(d=>{ if(d && d.name) dist.push({name:String(d.name).trim(), email:String(d.email||'').trim()}); });
+      }
+    }
     IMP={number:parseInt(num),hdr,prog,obs,prev,dist,name:file.name};
     render();
     toast('Read GRR No. '+num+' — choose what to do with it');
   }catch(e){ toast('Import failed: '+e.message); }
+}
+async function aiExtractHeader(rawText){
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+      headers:{'content-type':'application/json','x-api-key':S.settings.aiKey,
+        'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,
+        system:'Extract project information from the text of a construction General Review Report. Respond with ONLY JSON: {"project":"","location":"","projNo":"","permit":"","contractor":"","present":"","dist":[{"name":"","email":""}]}. "projNo" is the consultant/architect project number; "permit" is the building permit number; "present" is who attended for the architect; "dist" is the full report distribution list — each recipient\'s name with company, and their email address (use "" if no email shown). Use empty strings or [] for anything genuinely not present. Extract exactly what the document says — do not invent.',
+        messages:[{role:'user',content:rawText.slice(0,9000)}]})});
+    const data=await resp.json();
+    if(!resp.ok) return null;
+    const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+    const m=txt.match(/\{[\s\S]*\}/);
+    return m? JSON.parse(m[0]) : null;
+  }catch(e){ console.warn('aiExtractHeader failed', e); return null; }
 }
 function importApplyHdr(){
   const h=IMP.hdr;
