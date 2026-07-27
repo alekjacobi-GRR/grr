@@ -1529,7 +1529,7 @@ async function drawPreview(){
    <h3>PROGRESS OF THE WORK:</h3>${prog.map(it).join('')}
    <h3>OBSERVATIONS AND COMMENTS</h3>${obs.length?obs.map(it).join(''):'<div class="it"><span style="color:#999">— none recorded yet —</span></div>'}
    <h3>PREVIOUS AND UNRESOLVED DEFICIENCIES</h3>${prev.map(it).join('')}
-   <h3>PHOTO ARRAY (${S.settings.cols} × ${S.settings.rows} / page)</h3>
+   <h3>SITE PHOTOGRAPHS</h3>
    <div class="parr" style="grid-template-columns:repeat(${S.settings.cols},1fr)">${genThumbs||'<span style="color:#999;font-size:11px">— no photos yet —</span>'}</div>`;
 }
 /* ---- re-check existing items against contract documents ---- */
@@ -1903,7 +1903,9 @@ async function buildPdf(){
   const ch=(H-TOP-BOT-(rows-1)*GAP-rows*CAPH)/rows;
   for(let p=0;p<orderedIds.length;p+=per){
     const ppg=doc.addPage([W,H]); pages.push(ppg);
-    ppg.drawText('GENERAL REVIEW REPORT  No. '+S.report.number+'  -  PHOTOS',{x:PM,y:H-34,size:10,font:helvB});
+    ppg.drawText('GENERAL REVIEW REPORT  No. '+S.report.number+'  -  SITE PHOTOGRAPHS',{x:PM,y:H-34,size:10,font:helvB});
+    const dtx=fmtDates();
+    if(dtx) ppg.drawText(dtx,{x:W-PM-helv.widthOfTextAtSize(dtx,9),y:H-34,size:9,font:helv});
     ppg.drawLine({start:{x:PM,y:H-42},end:{x:W-PM,y:H-42},thickness:1,color:black});
     const slice=orderedIds.slice(p,p+per);
     for(let i=0;i<slice.length;i++){
