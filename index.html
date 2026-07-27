@@ -359,20 +359,47 @@ function seedPrev(){
   const obs17 = SEED_ITEMS.filter(i=>i.sec==='obs').map(i=>({num:i.num,text:i.text,resolved:false}));
   return prev.concat(obs17);
 }
+/* ---- multi-project: each project keeps its own state on this device ---- */
+function projMeta(){
+  try{ const m=JSON.parse(localStorage.getItem('grr-projects-v1')); if(m&&m.list&&m.list.length) return m; }catch(e){}
+  return {current:'default', list:[{id:'default', label:'MAGELLAN LTC (1807)'}]};
+}
+function projSave(m){ localStorage.setItem('grr-projects-v1', JSON.stringify(m)); }
+function stateKey(id){ return id==='default' ? 'grr-state-v1' : 'grr-state-'+id; }
+function blankProjectState(){
+  const s=JSON.parse(JSON.stringify(DEFAULTS));
+  s.settings.project=''; s.settings.location=''; s.settings.projNo=''; s.settings.permit='';
+  s.settings.contractor=''; s.settings.dist=[]; s.settings.specText='';
+  s.report=freshReport(1,[]);
+  return s;
+}
 let S = load();
-function load(){
+function load(pid){
+  const id = pid || projMeta().current;
   try{
-    const raw = localStorage.getItem('grr-state-v1');
-    if(raw){ return JSON.parse(raw); }
+    const raw = localStorage.getItem(stateKey(id));
+    if(raw){ const s=JSON.parse(raw); s._pid=id; return s; }
   }catch(e){}
-  const s = JSON.parse(JSON.stringify(DEFAULTS));
-  s.report = freshReport(18, seedPrev());
+  let s;
+  if(id==='default'){ s=JSON.parse(JSON.stringify(DEFAULTS)); s.report=freshReport(18, seedPrev()); }
+  else s=blankProjectState();
+  s._pid=id;
   return s;
 }
 let saveTimer=null;
-function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{
-  try{ localStorage.setItem('grr-state-v1', JSON.stringify(S)); }catch(e){ toast('⚠️ Could not save state'); }
-},250); }
+function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow,250); }
+function saveNow(){
+  clearTimeout(saveTimer);
+  try{ localStorage.setItem(stateKey(S._pid||projMeta().current), JSON.stringify(S)); }
+  catch(e){ toast('⚠️ Could not save state'); }
+}
+function switchProject(id){
+  saveNow();
+  const m=projMeta(); m.current=id; projSave(m);
+  S=load(id); IMP=null;
+  TAB='settings'; render();
+  toast('Switched to '+(m.list.find(p=>p.id===id)||{}).label);
+}
 function uid(){ return Math.random().toString(36).slice(2,10); }
 
 /* ======== IndexedDB photo store ======== */
@@ -388,12 +415,14 @@ function db(){ if(dbp) return dbp;
     rq.onsuccess = ()=>res(rq.result); rq.onerror = ()=>rej(rq.error);
   }); return dbp;
 }
-async function docsAdd(rec){ const d=await db(); return new Promise((res,rej)=>{
+async function docsAdd(rec){ const d=await db(); rec.pid=S._pid||'default'; return new Promise((res,rej)=>{
   const tx=d.transaction('docs','readwrite'); tx.objectStore('docs').put(rec);
   tx.oncomplete=res; tx.onerror=()=>rej(tx.error);});}
 async function docsAll(){ const d=await db(); return new Promise((res,rej)=>{
   const rq=d.transaction('docs').objectStore('docs').getAll();
-  rq.onsuccess=()=>res(rq.result||[]); rq.onerror=()=>rej(rq.error);});}
+  rq.onsuccess=()=>{ const cur=S._pid||'default';
+    res((rq.result||[]).filter(r=>(r.pid||'default')===cur)); };
+  rq.onerror=()=>rej(rq.error);});}
 async function docsDel(id){ const d=await db(); return new Promise((res)=>{
   const tx=d.transaction('docs','readwrite'); tx.objectStore('docs').delete(id); tx.oncomplete=res;});}
 async function photoPut(rec){ const d = await db(); return new Promise((res,rej)=>{
@@ -1996,7 +2025,15 @@ function renderSettings(m){
       <button class="btn sec small" id="impLoad" style="margin-top:6px">Load No. ${IMP.number} as current instead</button>
       <button class="btn sec small" id="impCancel" style="margin-top:6px">Dismiss</button>
     </div>` : '';
+  const meta=projMeta();
   m.innerHTML=`
+  <div class="card" style="border-color:var(--teal)">
+    <h2>Projects</h2>
+    <label class="f">Active project</label>
+    <select id="projSel">${meta.list.map(p=>`<option value="${p.id}" ${p.id===meta.current?'selected':''}>${esc(p.label)}</option>`).join('')}</select>
+    <button class="btn sec small" id="projNew" style="margin-top:8px">＋ New project</button>
+    <p class="note">Each project keeps its own reports, photos, specs and distribution on this device. New project workflow: create it here, then Import its most recent report (.docx) below and tap "Create next report".</p>
+  </div>
   <div class="card" style="border-color:var(--teal-dk)">
     <h2>Import a report</h2>
     <p class="note">Drop in a previous General Review Report (.docx — e.g. 1807_grr_18.docx). The app reads its items and project details, then you can create the next report from it: observations &amp; unresolved deficiencies carry forward under their original numbers, and the report number advances.</p>
@@ -2004,7 +2041,7 @@ function renderSettings(m){
     ${impUI}
   </div>
   <div class="card">
-    <h2>Project</h2>
+    <h2>Project details</h2>
     <label class="f">Name of project</label><input type="text" id="sProject" value="${esc(st.project)}">
     <label class="f">Location</label><input type="text" id="sLocation" value="${esc(st.location)}">
     <div class="row">
@@ -2056,6 +2093,19 @@ function renderSettings(m){
     <h2>Danger zone</h2>
     <button class="btn warn" id="wipe">Reset app (clears everything)</button>
   </div>`;
+  $('#projSel').onchange=e=>switchProject(e.target.value);
+  $('#projNew').onclick=()=>{
+    const label=prompt('Project name (e.g. "Brampton High School (2104)")');
+    if(!label||!label.trim()) return;
+    const key=S.settings.aiKey;             // API key carries over — it belongs to the device, not the project
+    saveNow();
+    const m2=projMeta();
+    const id='p'+Date.now().toString(36);
+    m2.list.push({id, label:label.trim()}); m2.current=id; projSave(m2);
+    S=load(id); S.settings.aiKey=key||''; saveNow(); IMP=null;
+    render();
+    toast('Project "'+label.trim()+'" created — now Import its latest report (.docx) below');
+  };
   $('#impBtn').onclick=()=>{ $('#fileImp').onchange=e=>{
       const f=e.target.files[0]; if(f) importReport(f); e.target.value='';
     }; $('#fileImp').click(); };
@@ -2151,8 +2201,16 @@ async function importReport(file){
       present:g(/Present:\s*\t?([^\n\t]+)/)
     };
     let sec=null; const prog=[],obs=[],prev=[];
+    let inDist=false; const dist=[];
     for(const p of paras){
-      if(/PROGRESS OF THE WORK/i.test(p)){sec='p';continue;}
+      if(/^Distribution:/.test(p)) inDist=true;
+      if(/PROGRESS OF THE WORK/i.test(p)){sec='p';inDist=false;continue;}
+      if(inDist){
+        const line=p.replace(/^Distribution:\s*/,'');
+        const dm=line.match(/^\t?\s*(.+?)\s*\t+\s*(\S+@\S+|\[[^\]]*\])\s*$/);
+        if(dm && !/^\d+\.\d+/.test(dm[1])) dist.push({name:dm[1].trim(), email:dm[2].trim()});
+        continue;
+      }
       if(/OBSERVATIONS AND COMMENTS/i.test(p)){sec='o';continue;}
       if(/PREVIOUS AND UNRESOLVED/i.test(p)){sec='v';continue;}
       const m=p.match(/^(\d+\.\d+)[\s\t]+([\s\S]+)/);
@@ -2162,7 +2220,7 @@ async function importReport(file){
       }
     }
     if(!prog.length&&!obs.length&&!prev.length) throw new Error('No numbered report items found');
-    IMP={number:parseInt(num),hdr,prog,obs,prev,name:file.name};
+    IMP={number:parseInt(num),hdr,prog,obs,prev,dist,name:file.name};
     render();
     toast('Read GRR No. '+num+' — choose what to do with it');
   }catch(e){ toast('Import failed: '+e.message); }
@@ -2171,6 +2229,7 @@ function importApplyHdr(){
   const h=IMP.hdr;
   for(const k of ['project','location','projNo','permit','contractor','present'])
     if(h[k]) S.settings[k]=h[k];
+  if(IMP.dist && IMP.dist.length) S.settings.dist=IMP.dist;
 }
 async function importClearPhotos(){
   for(const id of S.report.generalPhotoIds||[]) await photoDel(id);
