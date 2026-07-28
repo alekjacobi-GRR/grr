@@ -897,6 +897,9 @@ function voiceConfirm(question, onYes){
   const u=speak(question);
   if(u){ u.onend=()=>setTimeout(listen,150); setTimeout(listen,4000); } else listen();
 }
+/* ---- Alex's exact email signature (lifted from his real sent mail): styled HTML + inline icon images ---- */
+const SIG_ICONS=[{"cid": "sig1", "type": "image/png", "b64": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABHNCSVQICAgIfAhkiAAAAfxJREFUOI2tlD1oVFEQhb+zmyImIKzNCiGCTRALEbSxELSKShAUkYBEsBRshC0EWYYhhVbBUuwEsUgUK38aAyIp0hgQtVEjRsQfbNREEM0di+yu69t3t3Kad9+bM9898+Zy5e78zxjIJcxsL3AI2A3UgAR8ABaA++6+UlanokMzGwMuSjoBDGX2eyfpWkppxt1/dCcqBdh+SQ8kne4DAxiNiGlJt8ysXgo0s12SZoHtfUDFOCzpupkN/wM0s0HgCrC1pGhd0lVJxyPiKPC6kB8HzhcdTkg6mHHx0MzOmtkd4BnwsyiQdM7MRruBJ3M9SVppdXFK0jKws0RWr1QqEwAVMxuStCfDW0wp3WitX0i6BHzOaPe1HW4G6mUKSQvu/gjA3ZdSSpeBtTJtRIy0gVUKx6dLdMbdGwBmdkzSIrAt43CgDVwFvmZENWCstR4BdrQMlMWXNvBbRDzPiODvVH/10SBpCaDi7gHc7aNdbz1/99s0pXSv7RDgJrCcEQ+ZWY2N4eXczbn7kw7Q3T9FxAUgiuKImJL0StJ0hvc2pWTtl8503X1OUqMEOghsAYbpjffVanXK3TvdFW+bmYiYBF7m2uuK+Yg40mw2H3d/7Dl/7j4bEQciogHMAx/ZOMxrwBvgtqTJiBh396fF+p4LthitgWxi41esuvv3fvo/ma6xkYwdobEAAAAASUVORK5CYII="}, {"cid": "sig2", "type": "image/png", "b64": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABHNCSVQICAgIfAhkiAAAAfxJREFUOI2tlDtoFFEUhr9/EF/rC4sEkQhWVtr4ICrBRxW2EBtxi5WUWtikSCEKJwe2tbCxFQOr4GonEgutrER8YCGoGBQLLZQYDAaEORbuLDeT2cWAP0wx9/znu/8dzh25O/9Ta/oVzGwEqANHgR1ABswDL4BZd39W1adyQjPbCExKOg+M9Nnvl6S7eZ633P1tWshKsCGgI6k1AAawISLOSZo1s7FKoJnVgJuS6gNAZe2W1DGzfVUJJyWNrwJWaFjSNTNb3wOa2S5JFxNTAL9LjUuS2pLuAJ+AhaR2HDiVJqwDw2m3pMuS2sl7y8yaZnY2IsaApyX/mRQ4WkojYNHMmhExIelWlmWdpL4W2Fvq2W9mtWIOd7JSNQB3nwFmSrVD5RMBQ8DWIuGKAY+I02a2vWIjgJMVaxmQFcBvFYYjWZZNdAe9JzM7XHyvkn4APwvgywrDe2BPmt7MDkq6AWyp8L8BFgrzA+AKsC4xzAOvgNHu0Y9JagDbKmBIuj89PZ1nAO7+vDtfqQ5ExHVJDyXdlnShHwz4kOd5G5Kbkue5AR/7NAxSSLrk7l+XAd19LiKawOdVwqbMrHe6ZX8bd38SEXXg0T/A3klqmNnVdDEru9z9dUSMR0QDuAfMAYvd5wvwWNJURJxIkxVa8YMty8w2AZv5ex2X3P37IP8fSoujAhb2ozIAAAAASUVORK5CYII="}, {"cid": "sig3", "type": "image/png", "b64": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABHNCSVQICAgIfAhkiAAAAitJREFUOI2tlD9IV1EUxz/fV4SpYYNoURINTUFDEAQh1CZGNOZQQy0tQTgIBdHxgFNQUHMNpRBlQUaEFDW1BIFDg5CUS0RlRdo/FXyn4fdeXl8/zaEvXN69537P937fuX/k7vxPrF1uwsw6gG5gH7AZyICvwBgw6u4v6uWp6tDMGoFeSSeBjmXW+yXpTp7nA+7+Kp3IKmJtwLCkgRXEANZHxDFJo2bWWVfQzJqA65K6VxCqYrukYTPbVc9hr6Suov8pIk5HxCVg4R+i7ZIum1nDH0Ez65B0KiGNu/sV4ALwbRVO9wOHUocHgfaEsMfdByUNARsryXUdSzoCi8dmb2X+XZ7nj6nVaGdEnC2EdgB3gU2SzgHphuw2s6bS4ZaK4JS73wBuATPAiLsPAVeBOXd/FBHHWVqONqClFKwe8DXFt5laWRrMbJ2kEUnPzWyru78GJpKcDMhKwc/16pIgBxqBbUAL0AoQEXMJZxr4XgqOrSBUfheA+Uo8xTgwUwo+BNLVyoT5oj8HzAJRxEtuOUbSA3fPcXfcnSzLBiVF0aaAa8B9SdPATWBI0k9JAdyjtkEfC/4boN3dFzcjz/PzkjqLOrVKOpGs3pP+m6TDyTAknenv7/8AydVz98mIOAq8rVOf5RCS+szsdhlY8tq4+7OI6AaerEJsQlKPmV1Mg1mV5e4vI6IrInqo3YpJ4EfR3gNPJfVFxIHUWYm/HtgqzKwZ2AAImHX3LyvxfwO0QsOUoltHdgAAAABJRU5ErkJggg=="}, {"cid": "sig4", "type": "image/png", "b64": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABHNCSVQICAgIfAhkiAAAA2VJREFUOI11lU1IY1cUx3/nvJiYKH6AKHRKoS66ErENDgrtRsZ+IJQuB5LwFIUy0NXsuhAbLHRRQUp1YbuQh2TTIpTaVgcsQujU1sxCod1IqjToUg04STQf93YxJiSZ9MJdvHfP+f3Pff9zeBKPx2m1EonEm8Vi8QNVHQdeFxGx1p4aY/5U1W3XdZ+1ypNmoOd594FPgQ9VVa21jQkiGGMs8Avwheu6T+vPtf5hfX19VkSeqOpHIqLGGKy1DdsYAyCqOiUiO+vr65+0BHqe5zqO842I9FRBANZayuUy5XKZ+mrvwJ2O43zted6jBqDneSPAV4DeBQJQKBS4ubmho6ODUChEoVDg9va2dl4n8GUikRgH8N29mHccp7tSqdSCc7kcw8PDzM7OMjIygoiQTCZZW1vj/PycYDBYg6pqR7lc/mxhYeF9GRwcfAP4S0Taqor5fJ7JyUmWl5dJJpNsb28zMDBANBrFcRxisRiZTIb29vZ6s4y19i0FHqhqDVYqlejv72dxcZHNzU1WVlYwxrC6ukosFqO/v5/Hjx9X3a4HKvCeDxitd6lYLBIOhwkGgyQSCZaWlhgdHeXo6Ih0Ok0qlWJiYoK+vj4uLy9RbWiU+wrca9Vr1lpCoRC9vb2k02my2SzBYJCenh6y2SzFYhERaTBIRO691LiBQIBUKsXZ2Rnj4+Pkcjn29/dJp9MMDQ0RDofZ2dnh4uICn89H07JOb2/vO6oaroJVlXw+z97eHoFAgGg0Snd3N52dnSwsLHB9fc38/Dy5XK4BeHf1pyoifzTLtLW1cXx8TFdXF+Vymd3dXaampjg8PGR6eppMJkMgEGhOw1r7uw/41RiTF5FQ/XT4/X7GxsbIZDLE43H8fj+lUglVrfVg0zcvAU/Udd1/ge+a3MLv99Pe3s7W1haVSqUGqu+9puv+4LrusQ+gVCp9LiLvquor1d4KBAJsbGxwcnJCKBTCcZyXQNXqjDEXjuPE4W6W5+bm/rHWfgw8V1VEBFXl4OCAq6urVm7WV1YQkUeRSOTvGhDAdd2fjDEPgdMq1O/3t6ysKmitzVQqlYexWOz7mkh9oOu6P9/e3j6w1q5Ya7OqSqsNXFtrv7XWTs7MzPzYIPZ/vwDP814D3ubFaL76ojA5F5FnqvpbJBI5bZX3H7w9h1MzmpdrAAAAAElFTkSuQmCC"}];
+const SIG_HTML_DEFAULT="<div style=\"font-family:Calibri,Arial,sans-serif\"><p style=\"margin:0;font-size:11pt;color:#1F497D\">Alex Jacobi</p><p style=\"margin:0;font-size:9pt;color:#1F497D\"><i>Associate</i></p><p style=\"margin:0;font-size:11pt\"><b><span style=\"color:#4DC3CE\">Snyder</span><span style=\"color:#1F497D\">&nbsp;Architects Inc.</span></b></p><p style=\"margin:0;font-size:10pt;color:#1F497D\">100 Broadview Ave, Suite 301</p><p style=\"margin:0;font-size:10pt;color:#1F497D\">Toronto, Ontario M5A 4L5</p><p style=\"margin:0;font-size:11pt;color:#1F497D\">m:&nbsp; 416-300-0311</p><p style=\"margin:0;font-size:11pt;color:#1F497D\">w:&nbsp;<a href=\"http://www.snyderarchitects.ca/\" style=\"color:black\">snyderarchitects.ca</a></p><p style=\"margin:8px 0 0 0\"><a href=\"https://www.facebook.com/SnyderArchitects\"><img src=\"cid:sig1\" width=\"19\" height=\"19\" style=\"border:0\" alt=\"Facebook\"></a>&nbsp;&nbsp;&nbsp;<a href=\"https://twitter.com/SnyderArchitect\"><img src=\"cid:sig2\" width=\"19\" height=\"19\" style=\"border:0\" alt=\"Twitter\"></a>&nbsp;&nbsp;<a href=\"http://www.linkedin.com/company/snyder-architects\"><img src=\"cid:sig3\" width=\"19\" height=\"19\" style=\"border:0\" alt=\"LinkedIn\"></a>&nbsp;&nbsp;<a href=\"http://pinterest.com/snyderarchitect/\"><img src=\"cid:sig4\" width=\"19\" height=\"19\" style=\"border:0\" alt=\"Pinterest\"></a></p></div>";
 /* ---- Gmail API: create the draft IN Gmail with the PDF attached (needs a Google OAuth Client ID in Setup) ---- */
 function loadGis(){ return new Promise((res,rej)=>{
   if(window.google&&google.accounts&&google.accounts.oauth2) return res();
@@ -917,18 +920,27 @@ async function gmailToken(){
     }catch(e){ rej(e); }
   });
 }
-async function gmailApiDraft(to,subj,body){
+async function gmailApiDraft(to,subj,bodyCore){
   const tok=await gmailToken();
   const pdf=window._pdf;
   const b64=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=()=>rej(new Error('could not read the PDF')); r.readAsDataURL(pdf); });
+  const sigHtml=(S.settings.emailSigHtml||'').trim()||SIG_HTML_DEFAULT;
+  const icons=(S.settings.sigIcons&&S.settings.sigIcons.length?S.settings.sigIcons:SIG_ICONS)||[];
+  const htmlBody='<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#000">'+esc(bodyCore).replace(/\n/g,'<br>')+'<br><br></div>'+sigHtml;
   const subjEnc='=?UTF-8?B?'+btoa(unescape(encodeURIComponent(subj)))+'?=';
-  const bodyB64=btoa(unescape(encodeURIComponent(body)));
+  const htmlB64=btoa(unescape(encodeURIComponent(htmlBody)));
+  const rel=['--grrRel','Content-Type: text/html; charset="UTF-8"','Content-Transfer-Encoding: base64','',htmlB64,''];
+  for(const ic of icons){
+    rel.push('--grrRel','Content-Type: '+ic.type,'Content-Transfer-Encoding: base64','Content-ID: <'+ic.cid+'>','Content-Disposition: inline; filename="'+ic.cid+'.png"','',ic.b64,'');
+  }
+  rel.push('--grrRel--');
   const mime=['To: '+to,'Subject: '+subjEnc,'MIME-Version: 1.0',
-    'Content-Type: multipart/mixed; boundary="grrBnd"','','--grrBnd',
-    'Content-Type: text/plain; charset="UTF-8"','Content-Transfer-Encoding: base64','',bodyB64,'',
-    '--grrBnd','Content-Type: application/pdf; name="'+pdf.name+'"',
+    'Content-Type: multipart/mixed; boundary="grrMix"','','--grrMix',
+    'Content-Type: multipart/related; boundary="grrRel"','',
+    ...rel,'',
+    '--grrMix','Content-Type: application/pdf; name="'+pdf.name+'"',
     'Content-Disposition: attachment; filename="'+pdf.name+'"',
-    'Content-Transfer-Encoding: base64','',b64,'--grrBnd--',''].join('\r\n');
+    'Content-Transfer-Encoding: base64','',b64,'--grrMix--',''].join('\r\n');
   const resp=await fetch('https://gmail.googleapis.com/upload/gmail/v1/users/me/drafts?uploadType=media',
     {method:'POST',headers:{'Authorization':'Bearer '+tok,'Content-Type':'message/rfc822'},body:mime});
   const data=await resp.json().catch(()=>({}));
@@ -944,7 +956,8 @@ async function emailReportDraft(){
   const to=dist.map(x=>x.email.trim()).join(',');
   const subj=S.settings.project+' — General Review Report No. '+S.report.number;
   const sig=(S.settings.emailSig||'').trim() || ('Regards,\n'+S.settings.firm);
-  const body='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.\n\n'+sig;
+  const bodyCore='Good day,\n\nPlease find attached General Review Report No. '+S.report.number+' for '+S.settings.project+', covering the site visit(s) of '+(fmtDates()||'')+'.';
+  const body=bodyCore+'\n\n'+sig;
   try{ navigator.clipboard.writeText(to); }catch(e){}
   let via=S.settings.emailVia;
   if(via!=='gmail' && via!=='mailto'){
@@ -952,7 +965,7 @@ async function emailReportDraft(){
     S.settings.emailVia=via; save();
   }
   if(via==='gmail' && (S.settings.gClientId||'').trim() && window._pdf){
-    try{ return await gmailApiDraft(to,subj,body); }
+    try{ return await gmailApiDraft(to,subj,bodyCore); }
     catch(e){ toast('⚠️ Gmail attach failed ('+e.message+') — opening a standard draft instead'); }
   }
   if(window._pdf){ try{ const a=document.createElement('a'); a.href=URL.createObjectURL(window._pdf); a.download=window._pdf.name; document.body.appendChild(a); a.click(); a.remove(); }catch(e){} }
