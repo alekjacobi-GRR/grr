@@ -545,10 +545,11 @@ function readState(pid){
   try{ const raw=localStorage.getItem(stateKey(pid)); if(raw){ const s=JSON.parse(raw); s._pid=pid; return s; } }catch(e){}
   return null;
 }
+const G_CLIENT_DEFAULT='206862453410-s00thdc4margbnpifaq5dkmoihct8bid.apps.googleusercontent.com'; /* public web-client id, origin-locked to alekjacobi-grr.github.io */
 function anyClientId(){
   if((S.settings.gClientId||'').trim()) return S.settings.gClientId.trim();
   for(const p of projMeta().list){ const st=readState(p.id); if(st&&st.settings&&(st.settings.gClientId||'').trim()) return st.settings.gClientId.trim(); }
-  return '';
+  return G_CLIENT_DEFAULT;
 }
 async function docsAllRaw(){ const d=await db(); return new Promise((res,rej)=>{ const rq=d.transaction('docs').objectStore('docs').getAll(); rq.onsuccess=()=>res(rq.result||[]); rq.onerror=()=>rej(rq.error); }); }
 async function docsPutRaw(rec){ const d=await db(); return new Promise((res,rej)=>{ const tx=d.transaction('docs','readwrite'); tx.objectStore('docs').put(rec); tx.oncomplete=res; tx.onerror=()=>rej(tx.error); }); }
@@ -1146,7 +1147,7 @@ async function gmailToken(){
   return new Promise((res,rej)=>{
     try{
       const tc=google.accounts.oauth2.initTokenClient({
-        client_id:S.settings.gClientId.trim(),
+        client_id:anyClientId(),
         scope:G_SCOPES,
         callback:t=>{ if(t&&t.access_token){ window._gTok=t.access_token; window._gTokExp=Date.now()+((t.expires_in||3500)-60)*1000; res(t.access_token); } else rej(new Error((t&&t.error)||'no token')); }
       });
@@ -2832,7 +2833,7 @@ function renderSettings(m){
     <button class="btn sec" id="bkThis">⬇️ Backup this project (.zip)</button>
     <button class="btn sec" id="bkAll" style="margin-top:6px">⬇️ Backup ALL projects (.zip)</button>
     <button class="btn sec" id="bkRestore" style="margin-top:6px">📥 Restore from backup…</button>
-    <p class="note" style="margin-top:12px"><b>Google Drive sync</b> keeps a copy of every project in your own Google Drive's private app storage (same Google sign-in as 📧 email — needs the Client ID in the Distribution card). Open the app on any device — e.g. your iPhone — signed into the same Google account and tap Sync to pull your projects down. The newest version of each project wins.</p>
+    <p class="note" style="margin-top:12px"><b>Google Drive sync</b> keeps a copy of every project in your own Google Drive's private app storage (same Google sign-in as 📧 email — built into the app; the Distribution card can override it). Open the app on any device — e.g. your iPhone — signed into the same Google account and tap Sync to pull your projects down. The newest version of each project wins.</p>
     <button class="btn" id="syncNow">⇅ Sync with Google Drive now</button>
     <label class="f" style="display:flex;align-items:center;gap:8px;margin-top:10px;text-transform:none;letter-spacing:0"><input type="checkbox" id="syncAuto" ${st.driveSync?'checked':''} style="width:auto"> Auto-sync (about a minute after each change, and on app start)</label>
     <p class="note" id="syncInfo">${esc(syncInfoText())}</p>
