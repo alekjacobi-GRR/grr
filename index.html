@@ -143,6 +143,7 @@ hr.s{border:none;border-top:1px solid var(--line);margin:14px 0}
 <input type="file" id="fileSig" accept="image/*" hidden>
 <input type="file" id="fileImp" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
 <input type="file" id="fileDocs" accept=".pdf,.txt" multiple hidden>
+<input type="file" id="fileBk" accept=".zip" hidden>
 
 <script>
 /* ======== embedded assets ======== */
@@ -404,9 +405,11 @@ function ensureBoilerLast(){
 }
 function save(){ ensureBoilerLast(); clearTimeout(saveTimer); saveTimer=setTimeout(saveNow,250); }
 function saveNow(){
-  clearTimeout(saveTimer);
+  clearTimeout(saveTimer); saveTimer=null;
+  S._savedAt=Date.now();
   try{ localStorage.setItem(stateKey(S._pid||projMeta().current), JSON.stringify(S)); }
   catch(e){ toast('⚠️ Could not save state'); }
+  driveAutoKick();
 }
 function switchProject(id){
   saveNow();
@@ -528,6 +531,237 @@ async function rotatedBlob(rec, maxDim, aspect){
   const blob = await new Promise(r=>c.toBlob(r,'image/jpeg',0.85));
   bmp.close && bmp.close();
   return blob;
+}
+
+/* ======== backup / restore (zip) & Google Drive sync — v24 ======== */
+const G_SCOPES='https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/drive.appdata';
+function refPhotoIds(st){
+  const out=new Set(); const r=(st&&st.report)||{};
+  for(const it of [...(r.progress||[]),...(r.obs||[])]) for(const id of (it.photoIds||[])) out.add(id);
+  for(const id of (r.generalPhotoIds||[])) out.add(id);
+  return [...out];
+}
+function readState(pid){
+  try{ const raw=localStorage.getItem(stateKey(pid)); if(raw){ const s=JSON.parse(raw); s._pid=pid; return s; } }catch(e){}
+  return null;
+}
+function anyClientId(){
+  if((S.settings.gClientId||'').trim()) return S.settings.gClientId.trim();
+  for(const p of projMeta().list){ const st=readState(p.id); if(st&&st.settings&&(st.settings.gClientId||'').trim()) return st.settings.gClientId.trim(); }
+  return '';
+}
+async function docsAllRaw(){ const d=await db(); return new Promise((res,rej)=>{ const rq=d.transaction('docs').objectStore('docs').getAll(); rq.onsuccess=()=>res(rq.result||[]); rq.onerror=()=>rej(rq.error); }); }
+async function docsPutRaw(rec){ const d=await db(); return new Promise((res,rej)=>{ const tx=d.transaction('docs','readwrite'); tx.objectStore('docs').put(rec); tx.oncomplete=res; tx.onerror=()=>rej(tx.error); }); }
+async function docsDelPid(pid){ const all=await docsAllRaw(); for(const r of all) if((r.pid||'default')===pid) await docsDel(r.id); }
+async function packProject(pid,label,zip){
+  const st=readState(pid); if(!st) return null;
+  const photoMeta={};
+  for(const id of refPhotoIds(st)){
+    const rec=await photoGet(id); if(!rec) continue;
+    photoMeta[id]={rot:rec.rot||0, itemRef:rec.itemRef||null};
+    if(zip) zip.file('photos/'+id+'.jpg', rec.blob, {compression:'STORE'});
+  }
+  const docs=(await docsAllRaw()).filter(d=>(d.pid||'default')===pid);
+  return {pid, label, savedAt:st._savedAt||0, state:st, photoMeta, docs};
+}
+function dlBlob(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},4000); }
+function fnSlug(s){ return String(s||'').replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)||'project'; }
+async function backupProjects(all){
+  try{
+    saveNow();
+    if(typeof JSZip==='undefined') throw new Error('zip library not loaded — go online once and reload');
+    toast('Building backup…');
+    const meta=projMeta();
+    const cur=S._pid||meta.current;
+    const list= all? meta.list : meta.list.filter(p=>p.id===cur);
+    const zip=new JSZip(); const projects=[];
+    for(const p of list){ const e=await packProject(p.id,p.label,zip); if(e) projects.push(e); }
+    if(!projects.length) throw new Error('nothing to back up yet');
+    zip.file('grr-backup.json', JSON.stringify({app:'grr',ver:1,exportedAt:new Date().toISOString(),projects}));
+    const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:1}});
+    const d=new Date().toISOString().slice(0,10);
+    dlBlob(blob, all? ('grr_backup_ALL_'+d+'.zip') : ('grr_backup_'+fnSlug((S.settings.projNo?S.settings.projNo+'_':'')+(list[0]&&list[0].label||''))+'_'+d+'.zip'));
+    toast('✓ Backup downloaded ('+(blob.size/1048576).toFixed(1)+' MB) — keep it somewhere safe (Drive, email, USB)');
+  }catch(e){ toast('⚠️ Backup failed: '+e.message); }
+}
+async function restoreBackup(file){
+  try{
+    saveNow();
+    if(typeof JSZip==='undefined') throw new Error('zip library not loaded — go online once and reload');
+    toast('Reading backup…');
+    const zip=await JSZip.loadAsync(file);
+    const mf=zip.file('grr-backup.json'); if(!mf) throw new Error('that zip is not a GRR backup');
+    const man=JSON.parse(await mf.async('string'));
+    if(!man.projects||!man.projects.length) throw new Error('backup contains no projects');
+    const meta=projMeta();
+    const names=man.projects.map(p=>p.label||p.pid).join(', ');
+    const existing=man.projects.filter(p=>meta.list.some(x=>x.id===p.pid)).map(p=>p.label||p.pid);
+    if(!confirm('Restore '+man.projects.length+' project(s): '+names+'?'+(existing.length?('\n\nAlready on this device: '+existing.join(', ')+' — restoring OVERWRITES them with the backup version.'):''))) return;
+    let nPhotos=0;
+    for(const p of man.projects){
+      const st=p.state; st._pid=p.pid;
+      localStorage.setItem(stateKey(p.pid), JSON.stringify(st));
+      if(!meta.list.some(x=>x.id===p.pid)) meta.list.push({id:p.pid, label:p.label||('Project '+p.pid)});
+      else if(p.label) meta.list=meta.list.map(x=>x.id===p.pid?{id:x.id,label:p.label}:x);
+      const pm=p.photoMeta||{};
+      for(const id of Object.keys(pm)){
+        const f=zip.file('photos/'+id+'.jpg'); if(!f) continue;
+        const raw=await f.async('blob');
+        await photoPut({id, blob:new Blob([raw],{type:'image/jpeg'}), rot:(pm[id].rot||0), itemRef:pm[id].itemRef||null});
+        delete thumbCache[id]; nPhotos++;
+      }
+      if(p.docs&&p.docs.length){ await docsDelPid(p.pid); for(const d of p.docs){ d.pid=p.pid; await docsPutRaw(d); } }
+    }
+    projSave(meta);
+    const cur=S._pid||meta.current;
+    if(man.projects.some(p=>p.pid===cur)){ S=load(cur); IMP=null; }
+    render(); setHeader();
+    toast('✓ Restored '+man.projects.length+' project(s), '+nPhotos+' photos');
+  }catch(e){ toast('⚠️ Restore failed: '+e.message); }
+}
+/* ---- Google Drive app-data sync ---- */
+const DRV='https://www.googleapis.com/drive/v3/files';
+const DRVUP='https://www.googleapis.com/upload/drive/v3/files';
+async function drvList(tok){
+  let files=[], pt='';
+  do{
+    const r=await fetch(DRV+'?spaces=appDataFolder&pageSize=1000&fields=nextPageToken,files(id,name,modifiedTime,appProperties)'+(pt?'&pageToken='+encodeURIComponent(pt):''),{headers:{Authorization:'Bearer '+tok}});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error((j.error&&j.error.message)||('Drive list '+r.status));
+    files=files.concat(j.files||[]); pt=j.nextPageToken||'';
+  }while(pt);
+  return files;
+}
+async function drvUpload(tok,name,data,mime,appProps,fileId){
+  const metaPart={name, mimeType:mime}; if(appProps) metaPart.appProperties=appProps;
+  if(!fileId) metaPart.parents=['appDataFolder'];
+  const fd=new FormData();
+  fd.append('metadata', new Blob([JSON.stringify(metaPart)],{type:'application/json'}));
+  fd.append('file', data instanceof Blob? data : new Blob([data],{type:mime}));
+  const r=await fetch(DRVUP+(fileId?('/'+fileId):'')+'?uploadType=multipart',{method:fileId?'PATCH':'POST',headers:{Authorization:'Bearer '+tok},body:fd});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error((j.error&&j.error.message)||('Drive upload '+r.status));
+  return j;
+}
+async function drvGet(tok,id){ const r=await fetch(DRV+'/'+id+'?alt=media',{headers:{Authorization:'Bearer '+tok}}); if(!r.ok) throw new Error('Drive download '+r.status); return r; }
+async function drvDel(tok,id){ try{ await fetch(DRV+'/'+id,{method:'DELETE',headers:{Authorization:'Bearer '+tok}}); }catch(e){} }
+function docsFp(docs){ return docs.map(d=>d.id+':'+(d.chars||0)).sort().join('|'); }
+function syncInfoText(){
+  try{ const i=JSON.parse(localStorage.getItem('grr-sync-info')||'null'); if(!i) return 'Never synced on this device.';
+    return 'Last sync: '+new Date(i.at).toLocaleString()+' — '+i.msg; }catch(e){ return ''; }
+}
+function syncInfoSet(msg){
+  try{ localStorage.setItem('grr-sync-info', JSON.stringify({at:Date.now(), msg})); }catch(e){}
+  const el=document.getElementById('syncInfo'); if(el) el.textContent=syncInfoText();
+}
+let SYNC_BUSY=false, syncKickTimer=null;
+function driveAutoKick(){
+  try{ if(!S||!S.settings||!S.settings.driveSync) return; }catch(e){ return; }
+  clearTimeout(syncKickTimer);
+  syncKickTimer=setTimeout(()=>driveSyncNow(true), 60000);
+}
+function syncSeen(){ try{ return JSON.parse(localStorage.getItem('grr-sync-seen')||'{}'); }catch(e){ return {}; } }
+function syncSeenSet(m){ try{ localStorage.setItem('grr-sync-seen', JSON.stringify(m)); }catch(e){} }
+async function driveSyncNow(quiet){
+  if(SYNC_BUSY) return; SYNC_BUSY=true;
+  const btn=document.getElementById('syncNow'); if(btn){ btn.disabled=true; btn.textContent='\u21c5 Syncing\u2026'; }
+  try{
+    const cid=anyClientId();
+    if(!cid) throw new Error('add the Google OAuth Client ID first (Distribution card above)');
+    if(!(S.settings.gClientId||'').trim()){ S.settings.gClientId=cid; }
+    if(saveTimer) saveNow();                       /* flush pending edits only \u2014 a sync itself never re-stamps the state */
+    clearTimeout(syncKickTimer);
+    if(!quiet) toast('\u21c5 Syncing with Google Drive\u2026');
+    const tok=await gmailToken();
+    const files=await drvList(tok);
+    const byName={}; for(const f of files) byName[f.name]=f;
+    const meta=projMeta();
+    const remote={};
+    for(const f of files){ const m=f.name.match(/^state-(.+)\.json$/); if(m) remote[m[1]]=f; }
+    const allDocs=await docsAllRaw();
+    const seen=syncSeen();
+    const fmtT=t=>t?new Date(t).toLocaleString():'never';
+    const pids=[...new Set([...meta.list.map(p=>p.id), ...Object.keys(remote)])];
+    let pushed=0,pulled=0,upPh=0,dnPh=0,conflicts=0; const referenced=new Set(); const pulledPids=[];
+    for(const pid of pids){
+      const st=readState(pid);
+      const localAt=(st&&st._savedAt)||0;
+      const rf=remote[pid];
+      const remoteAt=rf? (parseInt((rf.appProperties||{}).savedAt||'0',10)||Date.parse(rf.modifiedTime)||0) : 0;
+      /* change detection is by comparison to what THIS device saw at its last sync \u2014 never by comparing clocks across devices */
+      const localChanged = !!st && localAt!==(seen[pid]||0) && localAt>0;
+      const remoteChanged = !!rf && remoteAt!==(seen[pid]||0);
+      let action='';
+      if(st && !rf) action='push';
+      else if(rf && !st) action='pull';
+      else if(localChanged && !remoteChanged) action='push';
+      else if(remoteChanged && !localChanged) action='pull';
+      else if(localChanged && remoteChanged){
+        /* both sides changed since this device last synced \u2014 never overwrite silently */
+        const label=(meta.list.find(p=>p.id===pid)||{}).label||pid;
+        if(quiet){ conflicts++; if(st) for(const id of refPhotoIds(st)) referenced.add(id); continue; }
+        action = confirm('\u201c'+label+'\u201d has changes BOTH on this device (saved '+fmtT(localAt)+') and in Drive (saved '+fmtT(remoteAt)+').\n\nOK \u2014 keep THIS DEVICE\u2019s version (replaces the Drive copy)\nCancel \u2014 take the DRIVE version (replaces this device\u2019s copy)') ? 'push' : 'pull';
+      }
+      if(action==='push' && st){
+        const label=(meta.list.find(p=>p.id===pid)||{}).label||pid;
+        const photoMeta={};
+        for(const id of refPhotoIds(st)){
+          const rec=await photoGet(id); if(!rec) continue;
+          photoMeta[id]={rot:rec.rot||0, itemRef:rec.itemRef||null};
+          referenced.add(id);
+          if(!byName['photo-'+id+'.jpg']){ await drvUpload(tok,'photo-'+id+'.jpg',rec.blob,'image/jpeg'); byName['photo-'+id+'.jpg']={name:'photo-'+id+'.jpg'}; upPh++; }
+        }
+        const payload=JSON.stringify({pid, label, savedAt:localAt, state:st, photoMeta});
+        await drvUpload(tok,'state-'+pid+'.json',new Blob([payload],{type:'application/json'}),'application/json',{savedAt:String(localAt), label:String(label).slice(0,100)}, rf&&rf.id);
+        const docs=allDocs.filter(d=>(d.pid||'default')===pid);
+        const fp=docsFp(docs).slice(0,120); const df=byName['docs-'+pid+'.json'];
+        if(docs.length && (!df || (df.appProperties||{}).fp!==fp))
+          await drvUpload(tok,'docs-'+pid+'.json',new Blob([JSON.stringify(docs)],{type:'application/json'}),'application/json',{fp}, df&&df.id);
+        seen[pid]=localAt; pushed++;
+      } else if(action==='pull' && rf){
+        const j=await (await drvGet(tok,rf.id)).json();
+        const rst=j.state||{}; rst._pid=pid;
+        localStorage.setItem(stateKey(pid), JSON.stringify(rst));
+        if(!meta.list.some(p=>p.id===pid)) meta.list.push({id:pid, label:j.label||pid});
+        else if(j.label) meta.list=meta.list.map(p=>p.id===pid?{id:p.id,label:j.label}:p);
+        const pm=j.photoMeta||{};
+        for(const id of Object.keys(pm)){
+          referenced.add(id);
+          const rec=await photoGet(id);
+          if(rec){ if((rec.rot||0)!==(pm[id].rot||0)){ rec.rot=pm[id].rot||0; await photoPut(rec); delete thumbCache[id]; } continue; }
+          const pf=byName['photo-'+id+'.jpg']; if(!pf||!pf.id) continue;
+          const raw=await (await drvGet(tok,pf.id)).blob();
+          await photoPut({id, blob:new Blob([raw],{type:'image/jpeg'}), rot:pm[id].rot||0, itemRef:pm[id].itemRef||null});
+          delete thumbCache[id]; dnPh++;
+        }
+        const df=byName['docs-'+pid+'.json'];
+        if(df&&df.id){
+          const localFp=docsFp(allDocs.filter(d=>(d.pid||'default')===pid)).slice(0,120);
+          if((df.appProperties||{}).fp!==localFp){
+            const docs=await (await drvGet(tok,df.id)).json();
+            await docsDelPid(pid);
+            for(const d of (docs||[])){ d.pid=pid; await docsPutRaw(d); }
+          }
+        }
+        seen[pid]=(j.savedAt||remoteAt); pulledPids.push(pid); pulled++;
+      } else if(st){ for(const id of refPhotoIds(st)) referenced.add(id); }
+    }
+    projSave(meta); syncSeenSet(seen);
+    /* clean up Drive photos nothing references any more (e.g. after a report close-out) \u2014 only when no project was skipped */
+    if(!conflicts) for(const f of files){ const m=f.name.match(/^photo-(.+)\.jpg$/); if(m && !referenced.has(m[1])) await drvDel(tok,f.id); }
+    const cur=S._pid||meta.current;
+    if(pulledPids.includes(cur)){ S=load(cur); IMP=null; render(); setHeader(); }
+    else if(pulledPids.length && TAB==='settings') render();
+    const msg='\u2191'+pushed+' up, \u2193'+pulled+' down'+((upPh||dnPh)?(' \u00b7 photos \u2191'+upPh+' \u2193'+dnPh):'')+(conflicts?(' \u00b7 '+conflicts+' conflict(s) \u2014 tap Sync to resolve'):'');
+    syncInfoSet(msg);
+    if(!quiet) toast('\u2713 Drive sync done \u2014 '+msg);
+  }catch(e){
+    syncInfoSet('\u26a0\ufe0f '+e.message);
+    if(!quiet) toast('\u26a0\ufe0f Sync failed: '+e.message);
+  }finally{
+    SYNC_BUSY=false;
+    const b=document.getElementById('syncNow'); if(b){ b.disabled=false; b.textContent='\u21c5 Sync with Google Drive now'; }
+  }
 }
 
 /* ======== numbering ======== */
@@ -907,13 +1141,13 @@ function loadGis(){ return new Promise((res,rej)=>{
   s.onload=()=>res(); s.onerror=()=>rej(new Error('Google sign-in script failed to load'));
   document.head.appendChild(s); }); }
 async function gmailToken(){
-  await loadGis();
   if(window._gTok && window._gTokExp>Date.now()) return window._gTok;
+  await loadGis();
   return new Promise((res,rej)=>{
     try{
       const tc=google.accounts.oauth2.initTokenClient({
         client_id:S.settings.gClientId.trim(),
-        scope:'https://www.googleapis.com/auth/gmail.compose',
+        scope:G_SCOPES,
         callback:t=>{ if(t&&t.access_token){ window._gTok=t.access_token; window._gTokExp=Date.now()+((t.expires_in||3500)-60)*1000; res(t.access_token); } else rej(new Error((t&&t.error)||'no token')); }
       });
       tc.requestAccessToken({prompt:''});
@@ -2592,6 +2826,17 @@ function renderSettings(m){
     <input type="text" id="gClientId" value="${esc(st.gClientId||'')}" placeholder="123456789012-xxxxxxxx.apps.googleusercontent.com">
     <p class="hint" style="text-align:left">With a Client ID here, 📧 creates the draft directly inside your Gmail with the PDF already attached. One-time setup at console.cloud.google.com: new project → enable the Gmail API → OAuth consent screen (External, stay in Testing, add your Gmail as a test user) → Credentials → Create OAuth Client ID (Web application) with authorized JavaScript origin https://alekjacobi-grr.github.io — then paste the Client ID here. First email will pop a Google approval window once.</p>
   </div>
+  <div class="card" style="border-color:var(--teal)">
+    <h2>Backup &amp; Drive sync</h2>
+    <p class="note">Reports, photos and settings live only in this browser until you back them up. <b>Backup</b> downloads a zip archive you can keep anywhere; <b>Restore</b> brings it back — on this or any other device.</p>
+    <button class="btn sec" id="bkThis">⬇️ Backup this project (.zip)</button>
+    <button class="btn sec" id="bkAll" style="margin-top:6px">⬇️ Backup ALL projects (.zip)</button>
+    <button class="btn sec" id="bkRestore" style="margin-top:6px">📥 Restore from backup…</button>
+    <p class="note" style="margin-top:12px"><b>Google Drive sync</b> keeps a copy of every project in your own Google Drive's private app storage (same Google sign-in as 📧 email — needs the Client ID in the Distribution card). Open the app on any device — e.g. your iPhone — signed into the same Google account and tap Sync to pull your projects down. The newest version of each project wins.</p>
+    <button class="btn" id="syncNow">⇅ Sync with Google Drive now</button>
+    <label class="f" style="display:flex;align-items:center;gap:8px;margin-top:10px;text-transform:none;letter-spacing:0"><input type="checkbox" id="syncAuto" ${st.driveSync?'checked':''} style="width:auto"> Auto-sync (about a minute after each change, and on app start)</label>
+    <p class="note" id="syncInfo">${esc(syncInfoText())}</p>
+  </div>
   <div class="card">
     <h2>Danger zone</h2>
     <button class="btn warn" id="wipe">Reset app (clears everything)</button>
@@ -2667,6 +2912,11 @@ function renderSettings(m){
   $('#emailVia').onchange=e=>{ st.emailVia=e.target.value; save(); toast(e.target.value?'📧 Saved':'📧 Will ask next time'); };
   $('#emailSig').onchange=e=>{ st.emailSig=e.target.value; save(); toast('📧 Signature saved'); };
   $('#gClientId').onchange=e=>{ st.gClientId=e.target.value.trim(); window._gTok=null; save(); toast(st.gClientId?'🔗 Client ID saved — next email will ask Google once':'🔗 Cleared'); };
+  $('#bkThis').onclick=()=>backupProjects(false);
+  $('#bkAll').onclick=()=>backupProjects(true);
+  $('#bkRestore').onclick=()=>{ $('#fileBk').onchange=e=>{ const f=e.target.files[0]; if(f) restoreBackup(f); e.target.value=''; }; $('#fileBk').click(); };
+  $('#syncNow').onclick=()=>driveSyncNow(false);
+  $('#syncAuto').onchange=e=>{ st.driveSync=e.target.checked; save(); toast(st.driveSync?'⇅ Auto-sync ON':'⇅ Auto-sync off'); };
   $('#sigUp').onclick=()=>{ $('#fileSig').onchange=async e=>{
       const f=e.target.files[0]; if(!f)return;
       const bmp=await createImageBitmap(f,{imageOrientation:'from-image'}).catch(()=>createImageBitmap(f));
@@ -2819,6 +3069,7 @@ keepAwake();
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
 
 render();
+if(S.settings&&S.settings.driveSync){ setTimeout(()=>driveSyncNow(true), 2500); }
 </script>
 </body>
 </html>
